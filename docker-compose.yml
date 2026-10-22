@@ -1,0 +1,81 @@
+services:
+  na-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: na_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      NA_ORDER_DB_PASSWORD: ${NA_ORDER_DB_PASSWORD}
+      NA_PAYMENT_DB_PASSWORD: ${NA_PAYMENT_DB_PASSWORD}
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - na-pg-data:/var/lib/postgresql/data
+      - ./scripts/postgres/init-databases.sh:/docker-entrypoint-initdb.d/10-init-databases.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U na_admin -d postgres"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  na-payment-service:
+    build:
+      context: .
+      dockerfile: na-payment-service/Dockerfile
+    image: na-payment-service:local
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://na-postgres:5432/na_paymentdb
+      SPRING_DATASOURCE_USERNAME: na_payment_user
+      SPRING_DATASOURCE_PASSWORD: ${NA_PAYMENT_DB_PASSWORD}
+      APP_INTERNAL_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      TZ: Asia/Shanghai
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx256m -Duser.timezone=Asia/Shanghai"
+    expose:
+      - "8080"
+    depends_on:
+      na-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    mem_limit: 768m
+    restart: unless-stopped
+
+  na-order-service:
+    build:
+      context: .
+      dockerfile: na-order-service/Dockerfile
+    image: na-order-service:local
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://na-postgres:5432/na_orderdb
+      SPRING_DATASOURCE_USERNAME: na_order_user
+      SPRING_DATASOURCE_PASSWORD: ${NA_ORDER_DB_PASSWORD}
+      APP_PAYMENT_BASE_URL: http://na-payment-service:8080
+      APP_PAYMENT_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      APP_PAYMENT_CONNECT_TIMEOUT_MS: "2000"
+      APP_PAYMENT_READ_TIMEOUT_MS: "5000"
+      APP_RECONCILIATION_ENABLED: "true"
+      TZ: Asia/Shanghai
+      JAVA_TOOL_OPTIONS: "-Xms256m -Xmx512m -Duser.timezone=Asia/Shanghai"
+    ports:
+      - "8081:8080"
+    depends_on:
+      na-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    mem_limit: 1g
+    restart: unless-stopped
+
+volumes:
+  na-pg-data:
