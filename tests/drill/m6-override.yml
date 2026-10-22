@@ -1,0 +1,9 @@
+services:
+  na-payment-service:
+    environment:
+      APP_MOCK_DELAY_MS: "7000"
+  na-order-service:
+    environment:
+      APP_RECONCILIATION_DELAY_MS: "10000"
+      APP_RECONCILIATION_INITIAL_DELAY_MS: "10000"
+      APP_RECONCILIATION_STALE_SECONDS: "5"
