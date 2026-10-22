@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('我的订单')}"></head>
+<body>
+<header th:replace="~{fragments/layout :: nav}"></header>
+<main class="container">
+    <section class="page-head">
+        <div>
+            <h1>我的订单</h1>
+            <p class="muted">查看订单状态，完成支付或取消订单。</p>
+        </div>
+        <a class="btn btn-secondary btn-sm" th:href="@{/}">继续购物</a>
+    </section>
+
+    <div class="toolbar">
+        <div id="status-filters" class="filter-group">
+            <button type="button" class="filter-chip active" data-status="">全部</button>
+            <button type="button" class="filter-chip" data-status="PENDING_PAYMENT">待支付</button>
+            <button type="button" class="filter-chip" data-status="PAID">已支付</button>
+            <button type="button" class="filter-chip" data-status="CANCELLED">已取消</button>
+        </div>
+    </div>
+
+    <div id="orders-alert"></div>
+    <div id="orders-status" class="loading-state">
+        <span class="spinner"></span>正在加载订单...
+    </div>
+    <div id="orders-empty" class="empty-state hidden">
+        还没有符合条件的订单，<a th:href="@{/}">去挑选商品</a>
+    </div>
+    <div id="orders-list" class="order-list"></div>
+
+    <div id="orders-pagination" class="pagination hidden">
+        <button id="prev-page" type="button" class="btn btn-secondary btn-sm">上一页</button>
+        <span id="page-info" class="page-info"></span>
+        <button id="next-page" type="button" class="btn btn-secondary btn-sm">下一页</button>
+    </div>
+</main>
+
+<script th:src="@{/js/api.js}"></script>
+<script th:src="@{/js/cart.js}"></script>
+<script th:src="@{/js/orders.js}"></script>
+</body>
+</html>

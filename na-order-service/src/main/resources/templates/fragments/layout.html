@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head th:fragment="head(title)">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title th:text="${title} + ' · 简易订单系统'">简易订单系统</title>
+    <link rel="stylesheet" th:href="@{/css/app.css}">
+</head>
+<body>
+<header class="topbar" th:fragment="nav">
+    <div class="topbar-inner">
+        <a class="brand" th:href="@{/}">
+            <span class="brand-mark">OS</span>
+            <span>简易订单系统</span>
+        </a>
+        <nav class="main-nav">
+            <a th:href="@{/}">商品</a>
+            <a th:href="@{/orders}">我的订单</a>
+        </nav>
+        <div class="topbar-right">
+            <a class="cart-link" th:href="@{/checkout}">
+                购物车
+                <span id="cart-badge" class="badge">0</span>
+            </a>
+            <span class="user-name" sec:authentication="principal.displayName">演示用户</span>
+            <form id="logout-form" th:action="@{/logout}" method="post" class="inline-form">
+                <button type="submit" class="link-button">退出</button>
+            </form>
+        </div>
+    </div>
+</header>
+</body>
+</html>

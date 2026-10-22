@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('订单详情')}"></head>
+<body>
+<header th:replace="~{fragments/layout :: nav}"></header>
+<main class="container" id="order-detail-page" th:attr="data-order-no=${orderNo}">
+    <section class="page-head">
+        <div>
+            <h1>订单详情</h1>
+            <p class="muted">订单号：<span id="detail-order-no" th:text="${orderNo}">-</span></p>
+        </div>
+        <a class="btn btn-secondary btn-sm" th:href="@{/orders}">返回订单列表</a>
+    </section>
+
+    <div id="detail-alert"></div>
+    <div id="detail-status" class="loading-state">
+        <span class="spinner"></span>正在加载订单...
+    </div>
+    <div id="detail-content" class="detail-grid hidden">
+        <div>
+            <section class="detail-panel">
+                <div class="detail-panel-head">
+                    <h2>商品明细</h2>
+                    <span id="detail-badge" class="status status-pending">-</span>
+                </div>
+                <div class="detail-panel-body">
+                    <div class="item-row item-row-head">
+                        <span>商品</span>
+                        <span>数量</span>
+                        <span class="item-subtotal">小计</span>
+                    </div>
+                    <div id="detail-items"></div>
+                </div>
+            </section>
+        </div>
+        <aside class="detail-panel">
+            <div class="detail-panel-head">
+                <h2>订单信息</h2>
+            </div>
+            <div class="meta-list">
+                <div class="meta-row">
+                    <span>订单状态</span>
+                    <span id="detail-status-text">-</span>
+                </div>
+                <div class="meta-row">
+                    <span>订单金额</span>
+                    <span id="detail-total" class="order-amount">¥0.00</span>
+                </div>
+                <div class="meta-row">
+                    <span>创建时间</span>
+                    <span id="detail-created-at">-</span>
+                </div>
+                <div class="meta-row hidden" id="detail-paid-row">
+                    <span>支付时间</span>
+                    <span id="detail-paid-at">-</span>
+                </div>
+                <div class="meta-row hidden" id="detail-cancelled-row">
+                    <span>取消时间</span>
+                    <span id="detail-cancelled-at">-</span>
+                </div>
+                <div id="detail-actions" class="order-actions"></div>
+            </div>
+        </aside>
+    </div>
+</main>
+
+<script th:src="@{/js/api.js}"></script>
+<script th:src="@{/js/cart.js}"></script>
+<script th:src="@{/js/order-detail.js}"></script>
+</body>
+</html>

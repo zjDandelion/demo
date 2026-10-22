@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('登录')}"></head>
+<body class="login-page">
+<main class="login-card">
+    <div class="login-brand">
+        <span class="brand-mark brand-mark-large">OS</span>
+        <div>
+            <h1>简易订单系统</h1>
+            <p class="muted">登录后体验下单与模拟支付</p>
+        </div>
+    </div>
+
+    <div th:if="${param.error}" class="alert alert-error" role="alert">
+        用户名或密码错误，请重试
+    </div>
+    <div th:if="${param.logout}" class="alert alert-success" role="status">
+        已安全退出
+    </div>
+
+    <form th:action="@{/login}" method="post" class="form">
+        <label class="field">
+            <span>用户名</span>
+            <input type="text" name="username" autocomplete="username" autofocus required>
+        </label>
+        <label class="field">
+            <span>密码</span>
+            <input type="password" name="password" autocomplete="current-password" required>
+        </label>
+        <button type="submit" class="btn btn-primary btn-block">登录</button>
+    </form>
+
+    <p class="hint">演示账号：<code>demo</code> / <code>123456</code></p>
+</main>
+</body>
+</html>

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('商品')}"></head>
+<body>
+<header th:replace="~{fragments/layout :: nav}"></header>
+<main class="container">
+    <section class="page-head">
+        <div>
+            <h1>商品</h1>
+            <p class="muted">挑选商品加入购物车，结算后生成订单。</p>
+        </div>
+        <span id="product-count" class="muted"></span>
+    </section>
+
+    <div id="products-status" class="loading-state">
+        <span class="spinner"></span>正在加载商品...
+    </div>
+    <div id="product-grid" class="product-grid hidden"></div>
+</main>
+
+<script th:src="@{/js/api.js}"></script>
+<script th:src="@{/js/cart.js}"></script>
+<script th:src="@{/js/products.js}"></script>
+</body>
+</html>

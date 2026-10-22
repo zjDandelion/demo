@@ -1,0 +1,55 @@
+server:
+  port: 8080
+  servlet:
+    session:
+      cookie:
+        same-site: lax
+
+spring:
+  application:
+    name: na-order-service
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/na_orderdb}
+    username: ${SPRING_DATASOURCE_USERNAME:na_order_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jackson:
+    time-zone: Asia/Shanghai
+    serialization:
+      write-dates-as-timestamps: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+app:
+  seed:
+    enabled: true
+  demo-user:
+    username: demo
+    password: "123456"
+    display-name: 演示用户
+  payment:
+    base-url: ${APP_PAYMENT_BASE_URL:http://localhost:8091}
+    service-token: ${APP_PAYMENT_SERVICE_TOKEN:}
+    connect-timeout-ms: ${APP_PAYMENT_CONNECT_TIMEOUT_MS:2000}
+    read-timeout-ms: ${APP_PAYMENT_READ_TIMEOUT_MS:5000}
+  reconciliation:
+    enabled: ${APP_RECONCILIATION_ENABLED:false}
+    delay-ms: ${APP_RECONCILIATION_DELAY_MS:60000}
+    initial-delay-ms: ${APP_RECONCILIATION_INITIAL_DELAY_MS:60000}
+    stale-seconds: ${APP_RECONCILIATION_STALE_SECONDS:60}
+    batch-size: ${APP_RECONCILIATION_BATCH_SIZE:100}
+    alert-threshold: ${APP_RECONCILIATION_ALERT_THRESHOLD:5}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html

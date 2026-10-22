@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('结算')}"></head>
+<body>
+<header th:replace="~{fragments/layout :: nav}"></header>
+<main class="container">
+    <section class="page-head">
+        <div>
+            <h1>结算</h1>
+            <p class="muted">确认商品与数量后提交订单，价格与库存以服务端为准。</p>
+        </div>
+        <a class="btn btn-secondary btn-sm" th:href="@{/}">继续购物</a>
+    </section>
+
+    <div id="checkout-alert"></div>
+
+    <div id="checkout-status" class="loading-state">
+        <span class="spinner"></span>正在加载购物车...
+    </div>
+    <div id="checkout-empty" class="empty-state hidden">
+        购物车是空的，<a th:href="@{/}">去挑选商品</a>
+    </div>
+
+    <div id="checkout-content" class="checkout-layout hidden">
+        <section id="cart-list" class="cart-list"></section>
+        <aside class="summary-card">
+            <h2>订单摘要</h2>
+            <div class="summary-row">
+                <span>商品件数</span>
+                <span id="summary-count">0</span>
+            </div>
+            <div class="summary-row">
+                <span>商品金额</span>
+                <span>¥<span id="summary-total">0.00</span></span>
+            </div>
+            <div class="summary-row total">
+                <span>应付总额</span>
+                <span>¥<span id="summary-payable">0.00</span></span>
+            </div>
+            <button id="submit-order" type="button" class="btn btn-primary btn-block">提交订单</button>
+            <p class="checkout-note">提交后生成待支付订单，可在“我的订单”中完成支付。</p>
+        </aside>
+    </div>
+</main>
+
+<script th:src="@{/js/api.js}"></script>
+<script th:src="@{/js/cart.js}"></script>
+<script th:src="@{/js/checkout.js}"></script>
+</body>
+</html>
