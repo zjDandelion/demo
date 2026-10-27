@@ -271,6 +271,60 @@ async function apiJson(method, url, body) {
         const cancelledBadge = await evaluate(`document.querySelector('.order-card .status').textContent`);
         check('状态筛选（已取消）', cancelledBadge.indexOf('已取消') >= 0, cancelledBadge);
 
+        await navigate(BASE + '/');
+        await waitFor(`document.querySelectorAll('.product-card').length === 8`);
+        await evaluate(`(() => {
+            const input = document.getElementById('assistant-input');
+            input.value = '帮我拿两个机械键盘，再加一张升降桌';
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            document.getElementById('assistant-submit').click();
+            return true;
+        })()`);
+        await waitFor(`document.querySelectorAll('.draft-item').length === 1`, 15000, 'assistant draft item');
+        const draftName = await evaluate(`document.querySelector('.draft-item-name').textContent`);
+        check('AI 草稿命中商品', draftName.indexOf('机械键盘 K87') >= 0, draftName);
+        const draftTotal = await evaluate(`document.querySelector('.draft-total strong').textContent`);
+        check('AI 草稿金额正确', draftTotal === '¥598.00', draftTotal);
+        const draftAlert = await evaluate(`document.querySelector('.draft-card .alert').textContent`);
+        check('未配置模型时提示降级', draftAlert.indexOf('本地规则匹配') >= 0, draftAlert);
+        const draftUnmatched = await evaluate(`document.querySelector('.draft-unmatched-list li').textContent`);
+        check('AI 草稿提示未识别商品', draftUnmatched.indexOf('升降桌') >= 0, draftUnmatched);
+
+        await evaluate(`document.getElementById('draft-add').click()`);
+        await waitFor(`location.pathname === '/checkout'`, 15000, 'checkout after assistant draft');
+        await waitFor(`document.querySelectorAll('.cart-item').length === 1`);
+        const assistantCart = await evaluate(`JSON.parse(localStorage.getItem('order.cart.v1'))`);
+        check('AI 草稿加入购物车', Array.isArray(assistantCart) && assistantCart.length === 1 &&
+            assistantCart[0].productId === 1 && assistantCart[0].quantity === 2,
+            JSON.stringify(assistantCart));
+
+        await navigate(BASE + '/');
+        await waitFor(`document.querySelectorAll('.product-card').length === 8`);
+        await evaluate(`(() => {
+            const input = document.getElementById('assistant-input');
+            input.value = '来点外设';
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            document.getElementById('assistant-submit').click();
+            return true;
+        })()`);
+        await waitFor(`document.querySelectorAll('.candidate-chip').length === 4`, 15000, 'assistant candidates');
+        const questionText = await evaluate(`document.querySelector('.draft-question p').textContent`);
+        check('分类歧义给出候选', questionText.indexOf('外设') >= 0, questionText);
+        await evaluate(`(() => {
+            const chip = Array.from(document.querySelectorAll('.candidate-chip'))
+                .find((node) => node.textContent.indexOf('机械键盘 K87') >= 0);
+            if (!chip) return false;
+            chip.click();
+            return true;
+        })()`);
+        await waitFor(`document.querySelectorAll('.draft-item').length === 1`, 15000, 'picked candidate');
+        const pickedTag = await evaluate(`document.querySelector('.draft-item-name .draft-tag').textContent`);
+        check('候选点选加入草稿', pickedTag === '手动点选', pickedTag);
+        await evaluate(`Array.from(document.querySelectorAll('.draft-actions button'))
+            .find((node) => node.textContent === '放弃草稿').click()`);
+        await waitFor(`document.getElementById('assistant-result').classList.contains('hidden')`);
+        check('放弃草稿清理结果', true);
+
         await evaluate(`document.getElementById('logout-form').querySelector('button').click()`);
         await waitFor(`location.pathname === '/login' || location.pathname === '/login/logout'`);
         check('退出登录成功', await evaluate(`document.body.innerText.indexOf('登录后体验下单与模拟支付') >= 0`));

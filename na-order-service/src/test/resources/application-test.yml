@@ -24,3 +24,5 @@ app:
   payment:
     base-url: http://localhost:8091
     service-token: test-token
+  assistant:
+    catalog-cache-ttl-ms: 0

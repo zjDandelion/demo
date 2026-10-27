@@ -1,0 +1,12 @@
+{
+  "status": "DEGRADED",
+  "reason": "TIMEOUT",
+  "items": [],
+  "unmatched": [],
+  "questions": [],
+  "usage": {
+    "promptTokens": 0,
+    "completionTokens": 0,
+    "latencyMs": 4000
+  }
+}

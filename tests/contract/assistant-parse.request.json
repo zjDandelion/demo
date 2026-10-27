@@ -1,0 +1,17 @@
+{
+  "requestId": "drf_5f2c9a1b",
+  "userId": 1,
+  "text": "帮我拿两个机械键盘，再加一张升降桌",
+  "excludeProductIds": [1],
+  "catalog": [
+    {
+      "id": 1,
+      "name": "机械键盘 K87",
+      "description": "87 键热插拔机械键盘，白色背光",
+      "category": "外设",
+      "tags": "键盘,机械键盘,keyboard,输入设备",
+      "price": 299.00,
+      "stock": 25
+    }
+  ]
+}

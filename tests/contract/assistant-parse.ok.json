@@ -1,0 +1,15 @@
+{
+  "status": "OK",
+  "items": [
+    { "productId": 6, "quantity": 1 }
+  ],
+  "unmatched": [
+    { "text": "升降桌", "reason": "暂无此商品" }
+  ],
+  "questions": [],
+  "usage": {
+    "promptTokens": 620,
+    "completionTokens": 48,
+    "latencyMs": 870
+  }
+}
