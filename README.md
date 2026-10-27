@@ -2,30 +2,33 @@
 
 一个可运行、可演示的下单系统：登录 → 浏览商品 → 购物车 → 下单 → 模拟支付 → 订单查询，包含库存原子扣减、防超卖、取消回补、支付补偿与对账。
 
-系统由两个 Spring Boot 服务组成：
+系统由两个 Spring Boot 微服务、一个可选的 Python AI 服务和一个 PostgreSQL 实例组成：
 
 | 服务 | 职责 | 对外端口 |
 |---|---|---|
-| `na-order-service` | 登录、商品、订单、库存、支付 BFF、Saga 编排与对账 | 宿主 `8081` |
+| `na-order-service` | 登录、商品、订单、库存、支付 BFF、Saga 编排、对账、AI 草稿编排 | 宿主 `8081` |
 | `na-payment-service` | 支付单、Mock 渠道、退款/关闭、内部 API | 仅 Docker 内网 `8080` |
+| `na-assistant-service` | 自然语言解析为购物车草稿（可选，OpenAI 兼容模型） | 仅 Docker 内网 `8092` |
 | `na-postgres` | 一个 PostgreSQL 16 实例，`na_orderdb` / `na_paymentdb` 两库两账号 | `127.0.0.1:5433`（本地调试可选） |
 
-技术栈：Java 8、Spring Boot 2.7.18、Spring Security、Spring Data JPA、Thymeleaf、原生 JavaScript、PostgreSQL 16、Flyway、springdoc-openapi、Docker Compose。
+技术栈：Java 8、Spring Boot 2.7.18、Spring Security、Spring Data JPA、Thymeleaf、原生 JavaScript、PostgreSQL 16、Flyway、springdoc-openapi、Python 3.11、FastAPI、pytest、Docker Compose。
 
 ## 架构与一致性
 
 ```text
 浏览器 ──> na-order-service ──> na_orderdb
                 │  X-Service-Token + X-Request-Id
-                └────────────> na-payment-service ──> na_paymentdb
+                ├────────────> na-payment-service ──> na_paymentdb
+                └────────────> na-assistant-service（可选）──> 第三方模型 API
 ```
 
 - 支付采用**同步 Saga**：订单服务写 `order_payment_attempt` 日志 → 调用支付服务 → 支付服务先落 `CREATED`、调用渠道、再落 `SUCCEEDED` → 订单服务在短事务中 markPaid + 标记 attempt。
 - 远程调用与渠道调用都在数据库事务之外；跨服务更新使用条件更新与幂等状态流转。
 - 失败补偿：取消与支付竞争时自动退款；金额/归属不一致时退款；支付结果未知时保留 `STARTED`，由定时对账按决策表收敛（补 PAID、退款或关闭）。
 - 两库无跨库查询、外键或事务；内部 token 使用常量时间比较，支付服务不映射宿主端口。
+- AI 链路使用独立的 `ASSISTANT_SERVICE_TOKEN`，订单服务不 `depends_on` 它；模型不可用或未配置时，草稿接口仍返回 200，只是 `degraded=true` 并回落到本地规则结果。
 
-详细设计见 [docs/microservices-design.md](docs/microservices-design.md)，实施与验收记录见 [docs/microservices-plan.md](docs/microservices-plan.md)。
+详细设计见 [docs/microservices-design.md](docs/microservices-design.md)、[docs/ai-ordering-design.md](docs/ai-ordering-design.md)，实施与验收记录见 [docs/microservices-plan.md](docs/microservices-plan.md)。
 
 ## 功能
 
@@ -37,6 +40,8 @@
 - 订单列表（分页、状态筛选）、订单详情、取消订单并回补库存
 - 独立支付服务与支付单，Mock 渠道同步成功，重复支付幂等
 - 支付故障 503、取消/支付竞争退款、定时对账
+- AI 自然语言下单草稿：规则层永远可用，模型可选补充；草稿可编辑、歧义候选可点选，确认后加入购物车
+- AI 未配置/超时/返回异常时页面明确提示并降级为规则结果，不阻断下单
 - 统一 JSON 错误响应、参数校验
 - Swagger UI 接口文档
 
@@ -52,8 +57,9 @@ bash scripts/deploy.sh
 ```
 
 - 首次运行自动生成 `.env`（PostgreSQL 超级用户密码、两个业务库密码、内部服务 token）；已有 `.env` 则复用。
-- 构建阶段在容器内执行两个服务的测试，测试失败不会替换正在运行的容器。
+- 构建阶段在容器内执行两个 Java 服务的测试，测试失败不会替换正在运行的容器。
 - 首次构建需下载依赖，耗时较长；后续有 BuildKit 缓存。
+- AI 下单默认不调用模型（`APP_ASSISTANT_ENABLED=false`），只走本地规则层。要接入真实模型：在 `.env` 填写 `ASSISTANT_SERVICE_TOKEN`、`ASSISTANT_BASE_URL`、`ASSISTANT_MODEL`、`ASSISTANT_API_KEY`，把 `docker-compose.yml` 中订单服务的 `APP_ASSISTANT_ENABLED` 改为 `"true"`，再执行 `docker compose up -d na-order-service`。API key 由使用者自行填写，不提交、不在会话中传递。
 
 访问：
 
@@ -65,7 +71,7 @@ bash scripts/deploy.sh
 
 ```bash
 docker compose ps
-docker compose logs -f na-order-service na-payment-service
+docker compose logs -f na-order-service na-payment-service na-assistant-service
 docker compose down            # 停止并删除容器，保留 na-pg-data 卷
 ```
 
@@ -94,13 +100,15 @@ java -jar na-order-service/target/na-order-service.jar --server.port=8090
 
 本地访问 <http://localhost:8090>。支付服务默认读取 `http://localhost:8091`，两库默认连接 `localhost:5433`。
 
+需要联调 AI 服务时，按 [docs/ai-ordering-design.md](docs/ai-ordering-design.md) §7.4 用覆盖文件把 `8092` 映射到宿主，再以 `APP_ASSISTANT_ENABLED=true`、`APP_ASSISTANT_URL=http://localhost:8092`、`APP_ASSISTANT_TOKEN=...` 启动订单服务。
+
 ## 测试
 
 ```bash
 ./mvnw clean package
 ```
 
-共 49 个自动化测试，使用 H2（PostgreSQL 兼容模式）与同一套 Flyway 脚本：
+共 105 个 Java 测试（订单 89 + 支付 16）与 35 个 Python 测试。Java 测试使用 H2（PostgreSQL 兼容模式）与同一套 Flyway 脚本：
 
 | 模块 / 测试类 | 数量 | 覆盖 |
 |---|---|---|
@@ -112,12 +120,21 @@ java -jar na-order-service/target/na-order-service.jar --server.port=8090
 | `SecurityTest` | 3 | 未登录 API 401 JSON、页面重定向、登录权限 |
 | `PaymentServiceTest` / `InternalPaymentApiTest` | 9 + 4 | 支付幂等、状态流转、内部 token 认证 |
 | `InternalAuthBypassTest` | 3 | 真实 HTTP 下的鉴权绕过变体（编码路径、双斜杠、`.` 段）、健康检查仍可匿名访问 |
+| `assistant/*Test` | 56 | 规则匹配、草稿编排与合并、降级映射、HTTP 客户端超时/不可达、跨语言契约、限流 |
+| Python `na-assistant-service/tests` | 35 | 鉴权、请求校验、模型正常/超时/非法输出降级、请求体限制、契约、日志隐私 |
 
 H2 仅用于快速测试；Flyway、唯一约束、条件更新与完整链路由真实 PostgreSQL + 浏览器 E2E 验证。
 
+Python 测试无需本机 Python 工具链：
+
+```bash
+docker run --rm -v "$PWD":/build -w /build/na-assistant-service python:3.11-slim \
+  sh -c "pip install -q -r requirements-dev.txt && python -m pytest -q"
+```
+
 ### 端到端与故障演练（可重放）
 
-自动化测试之外的验证资产已纳入版本控制，可在已部署的栈上重放：
+自动化测试之外的验证资产已纳入版本控制，可在已部署的栈上重放。`tests/e2e/e2e.js` 覆盖登录、购物车、下单、支付、取消、分页，以及 AI 草稿、降级提示、候选点选与加入购物车（共 31 项检查）：
 
 ```bash
 # 浏览器 E2E（需本机 headless Chrome）
@@ -130,6 +147,8 @@ bash tests/drill/m6-mismatch.sh   # 金额不一致补偿退款
 bash tests/drill/m6-s5-s6.sh      # 崩溃恢复与对账收敛
 bash tests/drill/p01-failed-attempt-recovery.sh  # FAILED 支付尝试可被下一次支付复位
 ```
+
+E2E 脚本假设数据库为初始种子状态（会创建订单并消耗库存）；在当前演示库上重放前，请使用一次性 Compose 栈，或先备份并重置数据。
 
 `tests/drill/m6-*.yml` 是演练用的 compose 覆盖文件（拉长渠道延迟、缩短对账周期），用法：
 `docker compose -f docker-compose.yml -f tests/drill/m6-override.yml up -d`。
@@ -149,8 +168,9 @@ bash tests/drill/p01-failed-attempt-recovery.sh  # FAILED 支付尝试可被下�
 | POST | `/api/orders/{orderNo}/cancel` | 取消订单 |
 | POST | `/api/payments` | 支付订单（Mock，同步成功） |
 | GET | `/api/payments/{paymentNo}` | 支付单详情 |
+| POST | `/api/assistant/drafts` | 自然语言生成购物车草稿（需登录，规则 + 可选模型） |
 
-支付服务内部接口位于 `/internal/v1/payments`，需要 `X-Service-Token`，不对外暴露。
+支付服务内部接口位于 `/internal/v1/payments`，需要 `X-Service-Token`；assistant 内部接口 `/internal/v1/assistant/parse` 使用独立的 `ASSISTANT_SERVICE_TOKEN`。两者都不对外暴露。
 
 ## 备份与恢复
 
@@ -184,5 +204,9 @@ docker compose start na-order-service na-payment-service
 - 对账任务按单实例设计，多实例部署前需加分布式锁（如 ShedLock）。
 - 演示环境共用一个 PostgreSQL 实例，数据库故障会同时影响两个服务；生产应拆分实例。
 - 内部认证为静态共享 token；生产应在私网隔离基础上替换为 mTLS/OAuth2。
-- 旧单体镜像 `order-system:local` 与旧 H2 卷 `demo_order-data` 保留作回滚快照，不再参与新栈运行；回滚时停止新栈后执行 `docker start demo-order-app-1`。
+- AI 下单默认不启用模型；启用后用户输入会发送给第三方模型服务（页面已提示），请勿输入个人信息。
+- AI 规则层为包含式匹配，可能误判（如“显示器支架”命中“显示器”），MVP 依赖草稿可编辑与低置信度提示兜底，尚无向量检索。
+- AI 限流（10 次/分钟/用户）与目录缓存均为单实例内存实现，多实例部署前需改为网关/Redis。
+- 草稿不锁库存，结算时仍以服务端价格与库存为准，仍可能因库存不足失败。
+- 旧单体镜像 `order-system:local` 与旧 H2 卷 `demo_order-data` 仍保留，但旧回滚容器已清理；如需回滚需按旧单体文档重新创建容器。
 - 旧数据按约定未迁移，新库从空库初始化并写入演示数据。

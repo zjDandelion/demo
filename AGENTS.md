@@ -2,11 +2,12 @@
 
 ## Project Structure & Module Organization
 
-This is a Java 8 / Spring Boot 2.7.18 microservices platform with three Maven modules:
+This is a Java 8 / Spring Boot 2.7.18 microservices platform with three Maven modules plus one Python service:
 
 - `na-payment-contract/` — shared DTOs and interface contracts consumed by both services (e.g. `PaymentView`, `PaymentStatusView`). Declared in the root `dependencyManagement` so versions stay in sync.
 - `na-order-service/` — order lifecycle, catalog, security, and the payment-orchestration integration layer. Packaged as `na-order-service.jar`.
 - `na-payment-service/` — independent payment processing with a mock channel. Packaged as `na-payment-service.jar`.
+- `na-assistant-service/` — Python 3.11 / FastAPI service that turns natural language into a cart draft via an OpenAI-compatible model. **Not a Maven module** and not built by `mvnw`; it is only built by Docker Compose (`na-assistant-service/Dockerfile`) and tested with pytest.
 
 Standard Spring Boot layout applies inside each module: `src/main/java`, `src/main/resources`, `src/test/java`, `src/test/resources`. Generated build artifacts live in `target/` and are gitignored.
 
@@ -14,7 +15,7 @@ Supporting directories at the repo root:
 
 - `scripts/` — Docker image build and deployment helpers (`deploy.sh`, `deploy.cmd`, `backup.sh`, `postgres/init-databases.sh`).
 - `docs/` — design plan and implementation notes.
-- `tests/` — replayable verification assets: `tests/e2e/e2e.js` (headless-Chrome E2E, set `E2E_BASE`) and `tests/drill/m6-*.sh` (fault-drill scripts run from WSL against the deployed stack).
+- `tests/` — replayable verification assets: `tests/e2e/e2e.js` (headless-Chrome E2E covering manual ordering plus AI drafts, degradation, candidate picking and add-to-cart; set `E2E_BASE`), `tests/drill/m6-*.sh` (fault-drill scripts run from WSL against the deployed stack), and `tests/contract/*.json` (Java ↔ Python contract fixtures asserted by both sides). The E2E script assumes a freshly initialized database.
 - `data/`, `logs/`, `backups/` — runtime artifacts; all gitignored.
 
 ## Build, Test, and Development Commands
@@ -25,7 +26,7 @@ The project ships a Maven Wrapper — no local Maven installation is required.
 # Full build + tests (run from repo root)
 .\mvnw.cmd clean package
 
-# Run order service locally (defaults to port 8090 when 8080 is occupied)
+# Run order service locally (binds 8080; override if the port is occupied)
 .\mvnw.cmd -pl na-order-service spring-boot:run -Dspring-boot.run.arguments=--server.port=8090
 
 # Run payment service locally
@@ -33,9 +34,13 @@ The project ships a Maven Wrapper — no local Maven installation is required.
 
 # Docker Compose deployment (requires WSL2 or native Docker)
 docker compose up -d --build --wait --wait-timeout 300
+
+# Python assistant service tests (no local Python toolchain required)
+docker run --rm -v "$PWD":/build -w /build/na-assistant-service python:3.11-slim \
+  sh -c "pip install -q -r requirements-dev.txt && python -m pytest -q"
 ```
 
-Local dev uses H2 file-based storage at `data/orderdb.mv.db`. Docker deployments use PostgreSQL via the `docker` Spring profile.
+Local dev connects to PostgreSQL at `jdbc:postgresql://localhost:5433/na_orderdb` (the `na-postgres` Compose service). H2 is used **only** by tests (`test` profile); there is no file-based local database.
 
 ## Coding Style & Naming Conventions
 
@@ -50,7 +55,7 @@ Local dev uses H2 file-based storage at `data/orderdb.mv.db`. Docker deployments
 - **Framework:** JUnit 5 via Spring Boot Test.
 - **Profiles:** Tests run under the `test` Spring profile, which activates an in-memory H2 database regardless of the active environment config.
 - **Running tests:** `.\mvnw.cmd test` (root) or `.\mvnw.cmd test -pl na-order-service` (module-specific).
-- **Coverage target:** All public service methods and payment orchestration paths should have tests. Key areas covered today: order creation with concurrency-safe stock deduction, order cancellation with stock reversal, payment idempotency, cross-service authorization checks, and security guardrails (unauthenticated 401 JSON, login redirects).
+- **Coverage target:** All public service methods and payment orchestration paths should have tests. Key areas covered today: order creation with concurrency-safe stock deduction, order cancellation with stock reversal, payment idempotency, cross-service authorization checks, security guardrails (unauthenticated 401 JSON, login redirects), and the AI draft pipeline (rule matching, merge, degradation mapping, HTTP timeout/unreachable, rate limiting, cross-language contract).
 - **New tests:** Place them in the same package as the class under test, or in a parallel `test/java` tree mirroring the main source structure. Name them `*Test.java`.
 
 ## Commit & Pull Request Guidelines
@@ -67,7 +72,9 @@ Pull requests should:
 
 ## Docker & Deployment Notes
 
-Deployment is orchestrated with `docker-compose.yml` (services: `na-postgres`, `na-payment-service`, `na-order-service`). Database passwords and the internal service token are loaded from `.env`. A Postgres init script in `scripts/postgres/init-databases.sh` creates the two databases on first boot.
+Deployment is orchestrated with `docker-compose.yml` (services: `na-postgres`, `na-payment-service`, `na-order-service`, `na-assistant-service`). Database passwords, the internal service token, and the optional AI settings are loaded from `.env`. A Postgres init script in `scripts/postgres/init-databases.sh` creates the two databases on first boot.
+
+`na-assistant-service` is internal-only (`expose: 8092`, no host port) and uses its own `ASSISTANT_SERVICE_TOKEN`, never the payment `INTERNAL_SERVICE_TOKEN`. The order service does not depend on it: when the container is down or misconfigured, `POST /api/assistant/drafts` still returns 200 with `degraded=true` and a `degradedReason`.
 
 The build stage runs all tests inside the container; a test failure prevents image replacement, protecting a running deployment.
 
@@ -76,6 +83,7 @@ Data volume `na-pg-data` persists across `docker compose down`. Use `docker comp
 ## Configuration Tips
 
 - Copy `.env.example` to `.env` and fill in `POSTGRES_PASSWORD`, `NA_ORDER_DB_PASSWORD`, `NA_PAYMENT_DB_PASSWORD`, and `INTERNAL_SERVICE_TOKEN` before running Docker Compose.
+- AI ordering is optional: fill `ASSISTANT_SERVICE_TOKEN`, `ASSISTANT_BASE_URL`, `ASSISTANT_MODEL`, `ASSISTANT_API_KEY` and set `APP_ASSISTANT_ENABLED: "true"` on the order service. Leave them empty to run rules-only with `degraded=true`.
 - `.env` is gitignored; never commit real credentials.
-- The `application-docker.yml` profile overrides datasource URLs for containerized PostgreSQL; local dev defaults to H2.
+- Compose injects `SPRING_DATASOURCE_URL`/`USERNAME`/`PASSWORD` for containerized PostgreSQL; `application-docker.yml` only adjusts logging. Local runs default to PostgreSQL on `localhost:5433`.
 - When adding a new Spring Boot module, declare it in the root `pom.xml` `<modules>` block and add it to `.gitignore` if it produces runtime-generated directories.
