@@ -50,6 +50,7 @@ public class ProductService implements CatalogPort {
 
     private ProductInfo toInfo(Product product) {
         return new ProductInfo(product.getId(), product.getName(), product.getDescription(),
-                product.getPrice(), product.getStock(), product.isEnabled());
+                product.getPrice(), product.getStock(), product.isEnabled(),
+                product.getCategory(), product.getTags());
     }
 }

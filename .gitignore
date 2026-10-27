@@ -19,3 +19,10 @@ logs/
 Thumbs.db
 
 .mvn/wrapper/maven-wrapper.jar
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/

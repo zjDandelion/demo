@@ -9,6 +9,8 @@ COPY na-payment-service/pom.xml na-payment-service/pom.xml
 RUN --mount=type=cache,target=/root/.m2 mvn -B -q -pl na-order-service -am dependency:go-offline || true
 COPY na-payment-contract/src na-payment-contract/src
 COPY na-order-service/src na-order-service/src
+# 契约夹具由 Java 测试与 Python pytest 共用（见 tests/contract/README.md）
+COPY tests/contract tests/contract
 RUN --mount=type=cache,target=/root/.m2 mvn -B -pl na-order-service -am package
 
 FROM eclipse-temurin:8-jre-jammy

@@ -19,3 +19,7 @@ mvnw.cmd
 Dockerfile
 docker-compose.yml
 scripts/
+**/__pycache__/
+**/*.py[cod]
+na-assistant-service/tests/
+na-assistant-service/.venv/

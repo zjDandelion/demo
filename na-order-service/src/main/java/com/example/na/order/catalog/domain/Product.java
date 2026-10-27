@@ -40,6 +40,12 @@ public class Product {
     @Column(nullable = false)
     private boolean enabled = true;
 
+    @Column(length = 50)
+    private String category;
+
+    @Column(length = 200)
+    private String tags;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -49,6 +55,13 @@ public class Product {
         this.price = price;
         this.stock = stock;
         this.enabled = enabled;
+    }
+
+    public Product(String name, String description, BigDecimal price, int stock, boolean enabled,
+                   String category, String tags) {
+        this(name, description, price, stock, enabled);
+        this.category = category;
+        this.tags = tags;
     }
 
     @PrePersist

@@ -13,13 +13,18 @@ public class ProductInfo {
     private final BigDecimal price;
     private final int stock;
     private final boolean enabled;
+    private final String category;
+    private final String tags;
 
-    public ProductInfo(Long id, String name, String description, BigDecimal price, int stock, boolean enabled) {
+    public ProductInfo(Long id, String name, String description, BigDecimal price, int stock, boolean enabled,
+                       String category, String tags) {
         this.id = id;
         this.name = name;
         this.description = description;
         this.price = price;
         this.stock = stock;
         this.enabled = enabled;
+        this.category = category;
+        this.tags = tags;
     }
 }

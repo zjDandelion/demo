@@ -46,6 +46,30 @@ services:
     mem_limit: 768m
     restart: unless-stopped
 
+  na-assistant-service:
+    build:
+      context: .
+      dockerfile: na-assistant-service/Dockerfile
+    image: na-assistant-service:local
+    environment:
+      ASSISTANT_INTERNAL_TOKEN: ${ASSISTANT_SERVICE_TOKEN:-}
+      ASSISTANT_BASE_URL: ${ASSISTANT_BASE_URL:-}
+      ASSISTANT_MODEL: ${ASSISTANT_MODEL:-}
+      ASSISTANT_API_KEY: ${ASSISTANT_API_KEY:-}
+      ASSISTANT_DEBUG: "0"
+      ASSISTANT_TIMEOUT_MS: "4000"
+      TZ: Asia/Shanghai
+    expose:
+      - "8092"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8092/health')"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    mem_limit: 256m
+    restart: unless-stopped
+
   na-order-service:
     build:
       context: .
@@ -61,6 +85,9 @@ services:
       APP_PAYMENT_CONNECT_TIMEOUT_MS: "2000"
       APP_PAYMENT_READ_TIMEOUT_MS: "5000"
       APP_RECONCILIATION_ENABLED: "true"
+      APP_ASSISTANT_ENABLED: "false"
+      APP_ASSISTANT_URL: http://na-assistant-service:8092
+      APP_ASSISTANT_TOKEN: ${ASSISTANT_SERVICE_TOKEN:-}
       TZ: Asia/Shanghai
       JAVA_TOOL_OPTIONS: "-Xms256m -Xmx512m -Duser.timezone=Asia/Shanghai"
     ports:

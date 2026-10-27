@@ -49,6 +49,18 @@ app:
     stale-seconds: ${APP_RECONCILIATION_STALE_SECONDS:60}
     batch-size: ${APP_RECONCILIATION_BATCH_SIZE:100}
     alert-threshold: ${APP_RECONCILIATION_ALERT_THRESHOLD:5}
+  assistant:
+    enabled: ${APP_ASSISTANT_ENABLED:false}
+    base-url: ${APP_ASSISTANT_URL:http://na-assistant-service:8092}
+    service-token: ${APP_ASSISTANT_TOKEN:}
+    connect-timeout-ms: ${APP_ASSISTANT_CONNECT_TIMEOUT_MS:2000}
+    read-timeout-ms: ${APP_ASSISTANT_READ_TIMEOUT_MS:4500}
+    max-text-length: 300
+    max-items: 20
+    max-catalog-size: 100
+    prefilter-top: 50
+    catalog-cache-ttl-ms: 60000
+    rate-limit-per-minute: 10
 
 springdoc:
   swagger-ui:

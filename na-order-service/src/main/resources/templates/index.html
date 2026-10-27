@@ -12,6 +12,26 @@
         <span id="product-count" class="muted"></span>
     </section>
 
+    <section class="assistant-panel" aria-labelledby="assistant-title">
+        <div class="assistant-head">
+            <div>
+                <h2 id="assistant-title">AI 下单助手</h2>
+                <p class="muted">用一句话描述想买的东西，生成可编辑的购物车草稿。</p>
+            </div>
+        </div>
+        <form id="assistant-form" class="assistant-form" novalidate>
+            <textarea id="assistant-input" maxlength="300" rows="2"
+                      placeholder="例如：帮我拿两个机械键盘，再加一张升降桌"
+                      aria-label="商品描述"></textarea>
+            <button id="assistant-submit" type="submit" class="btn btn-primary">生成草稿</button>
+        </form>
+        <div class="assistant-foot">
+            <span>输入内容会发送给第三方模型服务用于解析，请勿输入个人信息。</span>
+            <span id="assistant-counter" class="assistant-counter">0/300</span>
+        </div>
+        <div id="assistant-result" class="assistant-result hidden" aria-live="polite"></div>
+    </section>
+
     <div id="products-status" class="loading-state">
         <span class="spinner"></span>正在加载商品...
     </div>
@@ -20,6 +40,7 @@
 
 <script th:src="@{/js/api.js}"></script>
 <script th:src="@{/js/cart.js}"></script>
+<script th:src="@{/js/assistant.js}"></script>
 <script th:src="@{/js/products.js}"></script>
 </body>
 </html>
