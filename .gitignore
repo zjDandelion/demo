@@ -6,6 +6,12 @@ logs/
 .env
 *.log
 
+# 部署历史（含版本号与时间，仅本机有意义）
+.deploy-history
+
+# 备份脚本可能写入的本地目录
+na-backups/
+
 .idea/
 *.iml
 *.ipr

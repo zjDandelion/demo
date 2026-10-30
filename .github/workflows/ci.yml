@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+    paths-ignore: ['docs/**', '**.md']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  java:
+    name: Java 测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '8'
+          distribution: temurin
+          cache: maven
+
+      - name: 编译并测试
+        # closedPortIsUnreachable 依赖宿主对已关闭端口返回 RST；
+        # 部分环境（含 Windows 下的 WSL 转发）会静默超时，归类为 TIMEOUT。
+        # 该用例只在本机有差异，CI 的 ubuntu-latest 上是稳定的，故不排除。
+        run: ./mvnw -B clean verify
+
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: '**/target/surefire-reports/*.txt'
+          retention-days: 7
+
+  python:
+    name: Python 测试
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: na-assistant-service
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: na-assistant-service/requirements-dev.txt
+
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+
+  image:
+    name: 镜像构建
+    runs-on: ubuntu-latest
+    needs: [java, python]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 构建订单服务镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: na-order-service/Dockerfile
+          push: false
+          load: true
+          tags: na-order-service:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 构建支付服务镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: na-payment-service/Dockerfile
+          push: false
+          load: true
+          tags: na-payment-service:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 构建 assistant 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: na-assistant-service/Dockerfile
+          push: false
+          load: true
+          tags: na-assistant-service:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 扫描镜像漏洞
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: na-order-service:ci
+          format: table
+          severity: CRITICAL
+          exit-code: '0'
+          ignore-unfixed: true
+
+  secret-scan:
+    name: 密钥扫描
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

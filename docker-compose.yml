@@ -18,12 +18,16 @@ services:
       timeout: 3s
       retries: 10
     restart: unless-stopped
-
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
   na-payment-service:
     build:
       context: .
       dockerfile: na-payment-service/Dockerfile
-    image: na-payment-service:local
+    image: ${NA_PAYMENT_IMAGE:-na-payment-service:local}
     environment:
       SPRING_PROFILES_ACTIVE: docker
       SPRING_DATASOURCE_URL: jdbc:postgresql://na-postgres:5432/na_paymentdb
@@ -45,12 +49,16 @@ services:
       start_period: 30s
     mem_limit: 768m
     restart: unless-stopped
-
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
   na-assistant-service:
     build:
       context: .
       dockerfile: na-assistant-service/Dockerfile
-    image: na-assistant-service:local
+    image: ${NA_ASSISTANT_IMAGE:-na-assistant-service:local}
     environment:
       ASSISTANT_INTERNAL_TOKEN: ${ASSISTANT_SERVICE_TOKEN:-}
       ASSISTANT_BASE_URL: ${ASSISTANT_BASE_URL:-}
@@ -69,12 +77,16 @@ services:
       start_period: 10s
     mem_limit: 256m
     restart: unless-stopped
-
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
   na-order-service:
     build:
       context: .
       dockerfile: na-order-service/Dockerfile
-    image: na-order-service:local
+    image: ${NA_ORDER_IMAGE:-na-order-service:local}
     environment:
       SPRING_PROFILES_ACTIVE: docker
       SPRING_DATASOURCE_URL: jdbc:postgresql://na-postgres:5432/na_orderdb
@@ -103,6 +115,10 @@ services:
       start_period: 30s
     mem_limit: 1g
     restart: unless-stopped
-
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 volumes:
   na-pg-data:

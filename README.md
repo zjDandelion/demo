@@ -49,7 +49,9 @@
 
 前提：WSL2 Ubuntu 中 Docker 与 Compose 插件可用；项目位于 `/mnt/e/zhaoo_workspace/idea_workspace/demo`。
 
-Windows 双击 `scripts\deploy.cmd`，或在 WSL 中执行：
+**日常启动（推荐）**：双击 `scripts\start.cmd`。脚本会自动唤醒 WSL、等 Docker 就绪、启动容器、等健康检查通过并打开浏览器。改过代码后需要重建镜像时用 `scripts\start.cmd --build`；停止用 `scripts\stop.cmd`。
+
+首次部署或需要重新生成 `.env` 时，Windows 双击 `scripts\deploy.cmd`，或在 WSL 中执行：
 
 ```bash
 cd /mnt/e/zhaoo_workspace/idea_workspace/demo
@@ -65,6 +67,7 @@ bash scripts/deploy.sh
 
 - 应用：<http://localhost:8081>
 - Swagger：<http://localhost:8081/swagger-ui.html>（先在同一浏览器登录）
+- 监控面板：<http://localhost:3001>（Uptime Kuma，需先启动 ops 覆盖文件）
 - 演示账号：`demo` / `123456`
 
 常用命令：
@@ -74,6 +77,8 @@ docker compose ps
 docker compose logs -f na-order-service na-payment-service na-assistant-service
 docker compose down            # 停止并删除容器，保留 na-pg-data 卷
 ```
+
+发布、回滚、备份、监控的完整操作说明见 [docs/devops.md](docs/devops.md)。
 
 ## 本地开发（8090 / 8091）
 

@@ -1,0 +1,67 @@
+# 运维附加组件：监控面板 + 定时备份。
+#
+#   docker compose -f docker-compose.yml -f docker-compose.ops.yml up -d
+#
+# Uptime Kuma: http://localhost:3001   （首次访问创建管理员账号）
+# 首次启动后需要在界面里添加 4 个 HTTP(s) 监控：
+#   http://na-order-service:8080/actuator/health      （容器内网）
+#   http://na-payment-service:8080/actuator/health
+#   http://na-assistant-service:8092/health
+#   http://na-order-service:8080/login                （页面可用性）
+# 通知渠道在 Settings -> Notifications 配置（邮件/企业微信/钉钉 webhook 均免费）。
+
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: na-uptime-kuma
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - na-kuma-data:/app/data
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backup:
+    image: postgres:16
+    container_name: na-backup
+    restart: unless-stopped
+    depends_on:
+      na-postgres:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Shanghai
+      PGPASSWORD: ${NA_ORDER_DB_PASSWORD}
+      POSTGRES_HOST: na-postgres
+    entrypoint: ["/bin/sh", "-c"]
+    # 每天 03:00 备份两个库，保留 7 天；不停止应用（pg_dump 一致性快照）
+    command:
+      - |
+        echo "backup sidecar started"
+        while true; do
+          now=$$(date +%H%M)
+          if [ "$$now" = "0300" ]; then
+            ts=$$(date +%Y%m%d-%H%M%S)
+            pg_dump -h na-postgres -U na_order_user -d na_orderdb -Fc -f /backups/na-orderdb-$$ts.dump
+            PGPASSWORD="$${NA_PAYMENT_DB_PASSWORD}" pg_dump -h na-postgres -U na_payment_user -d na_paymentdb -Fc -f /backups/na-paymentdb-$$ts.dump
+            find /backups -name '*.dump' -mtime +7 -delete
+            echo "backup done: $$ts"
+          fi
+          sleep 60
+        done
+    volumes:
+      - na-backup-data:/backups
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+volumes:
+  na-kuma-data:
+  na-backup-data:
