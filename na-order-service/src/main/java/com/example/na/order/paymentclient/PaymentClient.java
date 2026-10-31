@@ -77,22 +77,24 @@ public class PaymentClient {
         }
     }
 
-    public PaymentView refund(String paymentNo, String reason) {
+    public PaymentView refund(Long userId, String paymentNo, String reason) {
         URI uri = UriComponentsBuilder.fromHttpUrl(baseUrl)
                 .pathSegment("internal", "v1", "payments", paymentNo, "refund")
                 .build()
                 .encode()
                 .toUri();
-        return exchange("退款", HttpMethod.POST, uri, new RefundCommand(reason), PaymentView.class);
+        return exchange("退款", HttpMethod.POST, uri,
+                RefundCommand.builder().reason(reason).userId(userId).build(), PaymentView.class);
     }
 
-    public PaymentView close(String paymentNo, String reason) {
+    public PaymentView close(Long userId, String paymentNo, String reason) {
         URI uri = UriComponentsBuilder.fromHttpUrl(baseUrl)
                 .pathSegment("internal", "v1", "payments", paymentNo, "close")
                 .build()
                 .encode()
                 .toUri();
-        return exchange("关闭支付单", HttpMethod.POST, uri, new ClosePaymentCommand(reason),
+        return exchange("关闭支付单", HttpMethod.POST, uri,
+                ClosePaymentCommand.builder().reason(reason).userId(userId).build(),
                 PaymentView.class);
     }
 

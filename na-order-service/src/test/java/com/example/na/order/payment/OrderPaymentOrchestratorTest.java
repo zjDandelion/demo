@@ -144,7 +144,7 @@ class OrderPaymentOrchestratorTest {
             orderService.cancelOrder(user.getId(), order.getOrderNo());
             return paymentView(order.getOrderNo(), user.getId(), order.getTotalAmount(), "SUCCEEDED");
         });
-        when(paymentClient.refund(eq("PAY-test"), anyString()))
+        when(paymentClient.refund(any(), eq("PAY-test"), anyString()))
                 .thenReturn(paymentView(order.getOrderNo(), user.getId(), order.getTotalAmount(),
                         "REFUNDED"));
 
@@ -156,7 +156,7 @@ class OrderPaymentOrchestratorTest {
                 orderRepository.findByOrderNo(order.getOrderNo()).get().getStatus());
         assertEquals(OrderPaymentAttemptStatus.REFUNDED,
                 attemptRepository.findByOrderNo(order.getOrderNo()).get().getStatus());
-        verify(paymentClient).refund(eq("PAY-test"), anyString());
+        verify(paymentClient).refund(any(), eq("PAY-test"), anyString());
     }
 
     @Test
@@ -166,7 +166,7 @@ class OrderPaymentOrchestratorTest {
         PaymentView wrongAmount = paymentView(order.getOrderNo(), user.getId(),
                 new BigDecimal("99.00"), "SUCCEEDED");
         when(paymentClient.pay(any(PaymentCommand.class))).thenReturn(wrongAmount);
-        when(paymentClient.refund(eq("PAY-test"), anyString()))
+        when(paymentClient.refund(any(), eq("PAY-test"), anyString()))
                 .thenReturn(paymentView(order.getOrderNo(), user.getId(),
                         new BigDecimal("99.00"), "REFUNDED"));
 
@@ -178,7 +178,7 @@ class OrderPaymentOrchestratorTest {
                 orderRepository.findByOrderNo(order.getOrderNo()).get().getStatus());
         assertEquals(OrderPaymentAttemptStatus.REFUNDED,
                 attemptRepository.findByOrderNo(order.getOrderNo()).get().getStatus());
-        verify(paymentClient).refund(eq("PAY-test"), anyString());
+        verify(paymentClient).refund(any(), eq("PAY-test"), anyString());
     }
 
     @Test
@@ -198,7 +198,7 @@ class OrderPaymentOrchestratorTest {
                                 .currency("CNY")
                                 .status("SUCCEEDED")
                                 .build()));
-        when(paymentClient.refund(eq("PAY-conflict"), anyString()))
+        when(paymentClient.refund(any(), eq("PAY-conflict"), anyString()))
                 .thenReturn(paymentView(order.getOrderNo(), user.getId(),
                         new BigDecimal("99.00"), "REFUNDED"));
 
@@ -210,7 +210,7 @@ class OrderPaymentOrchestratorTest {
                 orderRepository.findByOrderNo(order.getOrderNo()).get().getStatus());
         assertEquals(OrderPaymentAttemptStatus.REFUNDED,
                 attemptRepository.findByOrderNo(order.getOrderNo()).get().getStatus());
-        verify(paymentClient).refund(eq("PAY-conflict"), anyString());
+        verify(paymentClient).refund(any(), eq("PAY-conflict"), anyString());
     }
 
     @Test

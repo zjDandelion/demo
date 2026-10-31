@@ -136,9 +136,11 @@ class PaymentClientTest {
         server.expect(requestTo("http://localhost:9999/internal/v1/payments/PAY-1/refund"))
                 .andExpect(method(HttpMethod.POST))
                 .andExpect(jsonPath("$.reason").value("测试退款"))
+                // KI-03：退款必须带上 userId，供支付服务校验归属
+                .andExpect(jsonPath("$.userId").value(7))
                 .andRespond(withSuccess(paymentJson("REFUNDED"), MediaType.APPLICATION_JSON));
 
-        PaymentView result = client.refund("PAY-1", "测试退款");
+        PaymentView result = client.refund(7L, "PAY-1", "测试退款");
 
         assertEquals("REFUNDED", result.getStatus());
     }

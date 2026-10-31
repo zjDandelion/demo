@@ -102,6 +102,14 @@ public class OrderPaymentReconciliationJob {
         }
         PaymentStatusView payment = paymentOptional.get();
 
+        // KI-04：支付服务返回的数据必须与订单一致，否则不能据此入账。
+        // 与编排器共用同一套校验，避免两条路径行为不一致。
+        String mismatch = paymentMismatch(order, payment);
+        if (mismatch != null) {
+            handleMismatch(attempt, payment, mismatch);
+            return;
+        }
+
         switch (payment.getStatus()) {
             case STATUS_SUCCEEDED:
                 if (order.getStatus() == OrderStatus.PENDING_PAYMENT) {
@@ -129,6 +137,39 @@ public class OrderPaymentReconciliationJob {
                 break;
             default:
                 fail(attempt, "未知支付状态：" + payment.getStatus());
+        }
+    }
+
+    /**
+     * 校验支付单与订单是否一致（KI-04）。
+     *
+     * @return 不一致时返回原因描述，一致返回 null
+     */
+    private String paymentMismatch(CustomerOrder order, PaymentStatusView payment) {
+        if (!order.getOrderNo().equals(payment.getOrderNo())) {
+            return "支付单订单号不一致：" + payment.getOrderNo();
+        }
+        if (payment.getUserId() == null || !payment.getUserId().equals(order.getUserId())) {
+            return "支付单用户不一致：" + payment.getUserId();
+        }
+        if (payment.getAmount() == null
+                || payment.getAmount().compareTo(order.getTotalAmount()) != 0) {
+            return "支付单金额不一致：" + payment.getAmount();
+        }
+        return null;
+    }
+
+    /**
+     * 处理不一致的支付单：已扣款的一律退款，未扣款的标记失败。
+     */
+    private void handleMismatch(OrderPaymentAttempt attempt, PaymentStatusView payment,
+                                String reason) {
+        log.error("Payment mismatch detected during reconciliation: orderNo={}, paymentNo={}, reason={}",
+                attempt.getOrderNo(), payment.getPaymentNo(), reason);
+        if (STATUS_SUCCEEDED.equals(payment.getStatus())) {
+            refundAfterCancellation(attempt, payment.getPaymentNo(), "支付单与订单不一致，对账自动退款");
+        } else {
+            attemptStore.markFailed(attempt.getOrderNo(), reason);
         }
     }
 
@@ -196,9 +237,14 @@ public class OrderPaymentReconciliationJob {
     }
 
     private void refundAfterCancellation(OrderPaymentAttempt attempt, String paymentNo) {
+        refundAfterCancellation(attempt, paymentNo, "订单已取消，对账自动退款");
+    }
+
+    private void refundAfterCancellation(OrderPaymentAttempt attempt, String paymentNo,
+                                         String reason) {
         attemptStore.markRefundPending(attempt.getOrderNo(), paymentNo);
         try {
-            paymentClient.refund(paymentNo, "订单已取消，对账自动退款");
+            paymentClient.refund(attempt.getUserId(), paymentNo, reason);
             attemptStore.markRefunded(attempt.getOrderNo());
         } catch (PaymentClientException exception) {
             fail(attempt, "退款失败：" + exception.getMessage());
@@ -207,7 +253,7 @@ public class OrderPaymentReconciliationJob {
 
     private void closePayment(OrderPaymentAttempt attempt, String paymentNo) {
         try {
-            paymentClient.close(paymentNo, "订单已取消，对账关闭支付");
+            paymentClient.close(attempt.getUserId(), paymentNo, "订单已取消，对账关闭支付");
             attemptStore.markFailed(attempt.getOrderNo(), "订单已取消，支付已关闭");
         } catch (PaymentClientException exception) {
             if (exception.getStatusCode() != null && exception.getStatusCode() == 409) {

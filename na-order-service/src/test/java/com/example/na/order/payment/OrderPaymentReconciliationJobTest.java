@@ -35,6 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -102,12 +103,12 @@ class OrderPaymentReconciliationJobTest {
         createAttempt(order, user, OrderPaymentAttemptStatus.STARTED);
         when(paymentClient.findByOrder(user.getId(), order.getOrderNo()))
                 .thenReturn(Optional.of(statusView(order, user, "SUCCEEDED")));
-        when(paymentClient.refund(eq("PAY-reconcile"), anyString()))
+        when(paymentClient.refund(any(), eq("PAY-reconcile"), anyString()))
                 .thenReturn(paymentView(order, user, "REFUNDED"));
 
         job.reconcile();
 
-        verify(paymentClient).refund(eq("PAY-reconcile"), anyString());
+        verify(paymentClient).refund(any(), eq("PAY-reconcile"), anyString());
         assertEquals(OrderPaymentAttemptStatus.REFUNDED,
                 attemptRepository.findByOrderNo(order.getOrderNo()).get().getStatus());
         assertEquals(OrderStatus.CANCELLED,
@@ -200,8 +201,89 @@ class OrderPaymentReconciliationJobTest {
         attemptRepository.saveAndFlush(attempt);
     }
 
-    private PaymentStatusView statusView(OrderResponse order, User user, String status) {
-        return PaymentStatusView.builder()
+    // ---------------------------------------------------------------- KI-04
+    // 对账遇到「支付服务返回的数据与订单不一致」时不能据此入账。
+
+    @Test
+    void ki04_succeededWithWrongAmountIsRefundedNotMarkedPaid() {
+        User user = createUser("ki04-amount");
+        OrderResponse order = createOrder(user);
+        createAttempt(order, user, OrderPaymentAttemptStatus.STARTED);
+        PaymentStatusView wrong = PaymentStatusView.builder()
+                .paymentNo("PAY-reconcile")
+                .orderNo(order.getOrderNo())
+                .userId(user.getId())
+                .amount(order.getTotalAmount().add(new BigDecimal("1.00")))
+                .currency("CNY")
+                .status("SUCCEEDED")
+                .build();
+        when(paymentClient.findByOrder(user.getId(), order.getOrderNo()))
+                .thenReturn(Optional.of(wrong));
+        when(paymentClient.refund(any(), eq("PAY-reconcile"), anyString()))
+                .thenReturn(paymentView(order, user, "REFUNDED"));
+
+        job.reconcile();
+
+        // 不能入账，且已扣款的必须退款
+        assertEquals(OrderStatus.PENDING_PAYMENT,
+                orderRepository.findByOrderNo(order.getOrderNo()).get().getStatus());
+        assertEquals(OrderPaymentAttemptStatus.REFUNDED,
+                attemptRepository.findByOrderNo(order.getOrderNo()).get().getStatus());
+        verify(paymentClient).refund(any(), eq("PAY-reconcile"), anyString());
+    }
+
+    @Test
+    void ki04_succeededWithWrongUserIsRefundedNotMarkedPaid() {
+        User user = createUser("ki04-user");
+        OrderResponse order = createOrder(user);
+        createAttempt(order, user, OrderPaymentAttemptStatus.STARTED);
+        PaymentStatusView wrong = PaymentStatusView.builder()
+                .paymentNo("PAY-reconcile")
+                .orderNo(order.getOrderNo())
+                .userId(999L)
+                .amount(order.getTotalAmount())
+                .currency("CNY")
+                .status("SUCCEEDED")
+                .build();
+        when(paymentClient.findByOrder(user.getId(), order.getOrderNo()))
+                .thenReturn(Optional.of(wrong));
+        when(paymentClient.refund(any(), eq("PAY-reconcile"), anyString()))
+                .thenReturn(paymentView(order, user, "REFUNDED"));
+
+        job.reconcile();
+
+        assertEquals(OrderStatus.PENDING_PAYMENT,
+                orderRepository.findByOrderNo(order.getOrderNo()).get().getStatus());
+        assertEquals(OrderPaymentAttemptStatus.REFUNDED,
+                attemptRepository.findByOrderNo(order.getOrderNo()).get().getStatus());
+        verify(paymentClient).refund(any(), eq("PAY-reconcile"), anyString());
+    }
+
+    @Test
+    void ki04_createdWithWrongAmountIsMarkedFailedNotRetried() {
+        User user = createUser("ki04-created");
+        OrderResponse order = createOrder(user);
+        createAttempt(order, user, OrderPaymentAttemptStatus.STARTED);
+        PaymentStatusView wrong = PaymentStatusView.builder()
+                .paymentNo("PAY-reconcile")
+                .orderNo(order.getOrderNo())
+                .userId(user.getId())
+                .amount(order.getTotalAmount().add(new BigDecimal("5.00")))
+                .currency("CNY")
+                .status("CREATED")
+                .build();
+        when(paymentClient.findByOrder(user.getId(), order.getOrderNo()))
+                .thenReturn(Optional.of(wrong));
+
+        job.reconcile();
+
+        // 未扣款，不应重试支付，直接标记失败等人工处理
+        assertEquals(OrderPaymentAttemptStatus.FAILED,
+                attemptRepository.findByOrderNo(order.getOrderNo()).get().getStatus());
+        verify(paymentClient, never()).pay(any());
+    }
+
+    private PaymentStatusView statusView(OrderResponse order, User user, String status) {        return PaymentStatusView.builder()
                 .paymentNo("PAY-reconcile")
                 .orderNo(order.getOrderNo())
                 .userId(user.getId())

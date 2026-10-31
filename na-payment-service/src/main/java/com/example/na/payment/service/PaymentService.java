@@ -84,10 +84,12 @@ public class PaymentService {
         return toStatusView(payment);
     }
 
-    public PaymentView refund(String paymentNo, String reason) {
+    public PaymentView refund(String paymentNo, Long userId, String reason) {
         String normalizedReason = normalizeReason(reason);
         Payment payment = paymentRepository.findByPaymentNo(paymentNo)
                 .orElseThrow(() -> PaymentApiException.notFound("支付单不存在"));
+        // KI-03：校验归属，避免持有内部 token 的调用方退他人支付单
+        assertOwnership(payment, userId, "退款");
         if (payment.getStatus() == PaymentStatus.REFUNDED) {
             return toView(payment);
         }
@@ -105,9 +107,11 @@ public class PaymentService {
         return transactionTemplate.execute(status -> completeRefund(paymentNo, normalizedReason));
     }
 
-    public PaymentView close(String paymentNo, String reason) {
+    public PaymentView close(String paymentNo, Long userId, String reason) {
         Payment payment = paymentRepository.findByPaymentNo(paymentNo)
                 .orElseThrow(() -> PaymentApiException.notFound("支付单不存在"));
+        // KI-03：校验归属，避免持有内部 token 的调用方关闭他人支付单
+        assertOwnership(payment, userId, "关闭");
         if (payment.getStatus() == PaymentStatus.FAILED) {
             return toView(payment);
         }
@@ -123,6 +127,24 @@ public class PaymentService {
         }
 
         return transactionTemplate.execute(status -> completeClose(paymentNo));
+    }
+
+    /**
+     * 校验支付单归属（KI-03）。
+     *
+     * <p>越权访问统一按「不存在」处理（404），避免通过状态码探测他人支付单是否存在；
+     * 未提供 userId 时按参数错误拒绝，内部调用方必须显式声明操作人。
+     */
+    private void assertOwnership(Payment payment, Long userId, String action) {
+        if (userId == null) {
+            log.warn("Rejected {} without userId: paymentNo={}", action, payment.getPaymentNo());
+            throw PaymentApiException.invalid(action + "请求缺少 userId");
+        }
+        if (!payment.getUserId().equals(userId)) {
+            log.warn("Rejected {} for mismatched owner: paymentNo={}, ownerId={}, requesterId={}",
+                    action, payment.getPaymentNo(), payment.getUserId(), userId);
+            throw PaymentApiException.notFound("支付单不存在");
+        }
     }
 
     private PaymentCommand normalizeAndValidate(PaymentCommand command) {

@@ -93,14 +93,14 @@ class InternalPaymentApiTest {
         mockMvc.perform(post("/internal/v1/payments/{paymentNo}/refund", paymentNo)
                         .header(InternalHeaders.SERVICE_TOKEN, TOKEN)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"reason\":\"user cancel\"}"))
+                        .content("{\"reason\":\"user cancel\",\"userId\":1}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("REFUNDED"));
 
         mockMvc.perform(post("/internal/v1/payments/{paymentNo}/refund", paymentNo)
                         .header(InternalHeaders.SERVICE_TOKEN, TOKEN)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"reason\":\"user cancel\"}"))
+                        .content("{\"reason\":\"user cancel\",\"userId\":1}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("REFUNDED"));
     }
@@ -113,12 +113,14 @@ class InternalPaymentApiTest {
         mockMvc.perform(post("/internal/v1/payments/{paymentNo}/close", created.getPaymentNo())
                         .header(InternalHeaders.SERVICE_TOKEN, TOKEN)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"reason\":\"order cancelled\"}"))
+                        .content("{\"reason\":\"order cancelled\",\"userId\":1}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("FAILED"));
 
         mockMvc.perform(post("/internal/v1/payments/{paymentNo}/close", created.getPaymentNo())
-                        .header(InternalHeaders.SERVICE_TOKEN, TOKEN))
+                        .header(InternalHeaders.SERVICE_TOKEN, TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":1}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("FAILED"));
     }

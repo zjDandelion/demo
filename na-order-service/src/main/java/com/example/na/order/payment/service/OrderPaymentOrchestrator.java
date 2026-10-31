@@ -134,7 +134,7 @@ public class OrderPaymentOrchestrator {
                 || payment.getAmount() == null
                 || payment.getAmount().compareTo(order.getTotalAmount()) != 0;
         if (mismatch) {
-            compensateInvalidPayment(order.getOrderNo(), payment);
+            compensateInvalidPayment(order, payment);
         }
         if (STATUS_REFUNDED.equals(payment.getStatus())) {
             attemptStore.markRefunded(order.getOrderNo());
@@ -161,7 +161,7 @@ public class OrderPaymentOrchestrator {
         String paymentNo = existing.get().getPaymentNo();
         attemptStore.markRefundPending(order.getOrderNo(), paymentNo);
         try {
-            paymentClient.refund(paymentNo, "支付金额或归属校验失败，自动退款");
+            paymentClient.refund(userId, paymentNo, "支付金额或归属校验失败，自动退款");
             attemptStore.markRefunded(order.getOrderNo());
         } catch (PaymentClientException exception) {
             attemptStore.touch(order.getOrderNo(), "退款失败：" + exception.getMessage());
@@ -169,11 +169,13 @@ public class OrderPaymentOrchestrator {
         }
     }
 
-    private void compensateInvalidPayment(String orderNo, PaymentView payment) {        String reason = "订单支付校验失败，自动退款";
+    private void compensateInvalidPayment(CustomerOrder order, PaymentView payment) {
+        String orderNo = order.getOrderNo();
+        String reason = "订单支付校验失败，自动退款";
         if (STATUS_SUCCEEDED.equals(payment.getStatus())) {
             attemptStore.markRefundPending(orderNo, payment.getPaymentNo());
             try {
-                paymentClient.refund(payment.getPaymentNo(), reason);
+                paymentClient.refund(order.getUserId(), payment.getPaymentNo(), reason);
                 attemptStore.markRefunded(orderNo);
             } catch (PaymentClientException exception) {
                 attemptStore.touch(orderNo, "退款失败：" + exception.getMessage());
@@ -202,7 +204,7 @@ public class OrderPaymentOrchestrator {
             case ALREADY_PAID:
                 return new PaymentResult(toResponse(payment), false);
             case ORDER_CANCELLED:
-                refundCancelledOrder(order.getOrderNo(), payment);
+                refundCancelledOrder(order, payment);
                 throw BusinessException.conflict("订单已取消，支付已退款");
             default:
                 attemptStore.touch(order.getOrderNo(), "订单状态未确认");
@@ -210,10 +212,11 @@ public class OrderPaymentOrchestrator {
         }
     }
 
-    private void refundCancelledOrder(String orderNo, PaymentView payment) {
+    private void refundCancelledOrder(CustomerOrder order, PaymentView payment) {
+        String orderNo = order.getOrderNo();
         attemptStore.markRefundPending(orderNo, payment.getPaymentNo());
         try {
-            paymentClient.refund(payment.getPaymentNo(), "订单已取消，自动退款");
+            paymentClient.refund(order.getUserId(), payment.getPaymentNo(), "订单已取消，自动退款");
             attemptStore.markRefunded(orderNo);
         } catch (PaymentClientException exception) {
             attemptStore.touch(orderNo, "退款失败：" + exception.getMessage());

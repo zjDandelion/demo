@@ -5,14 +5,21 @@
     做的事：唤醒 WSL -> 等 Docker 就绪 -> docker compose up -d -> 等健康检查 -> 打开浏览器。
     默认不重新构建镜像（几秒完成）；需要重建时传 -Build。
 
+    关于保活：
+    WSL 空闲时会被 Windows 回收，容器随之冻结，浏览器就打不开了。
+    -KeepAlive 会在启动后保持一个前台窗口，只要窗口开着服务就一直在；
+    关掉窗口即停止保活，服务随后随 WSL 休眠（不影响数据）。
+
     参数：
         -Build            先 docker compose build 再启动（首次或改代码后用）
+        -KeepAlive        启动后保持窗口保活（关闭窗口即停止）
         -TimeoutSeconds   每一步的最长等待秒数，默认 240
 #>
 
 [CmdletBinding()]
 param(
     [switch]$Build,
+    [switch]$KeepAlive,
     [int]$TimeoutSeconds = 240
 )
 
@@ -147,4 +154,39 @@ Write-Host "  账号    demo / 123456" -ForegroundColor White
 Write-Host ""
 
 Start-Process $appUrl
-exit 0
+
+# ---------------------------------------------------------------- 6. 保活
+# WSL 空闲时会被 Windows 回收，容器随之冻结，浏览器就打不开了。
+# 这里留一个前台循环：只要这个窗口开着，服务就一直是可访问的。
+# 关闭窗口（或按 Ctrl+C）即停止保活，服务随之休眠。
+if (-not $KeepAlive) {
+    Write-Host "  提示：本次未开启保活，闲置几分钟后服务会随 WSL 休眠。" -ForegroundColor DarkGray
+    Write-Host "        需要长时间使用请运行：scripts\start.cmd --keep" -ForegroundColor DarkGray
+    Write-Host ""
+    exit 0
+}
+
+Write-Host "  保活已开启：保持此窗口打开，服务将一直可访问。" -ForegroundColor Green
+Write-Host "  关闭此窗口或按 Ctrl+C 即停止。" -ForegroundColor DarkGray
+Write-Host ""
+
+$startedAt = Get-Date
+try {
+    while ($true) {
+        Start-Sleep -Seconds 20
+        $code = (& curl.exe -s -m 5 -o NUL -w '%{http_code}' "$appUrl/actuator/health" 2>$null | Out-String).Trim()
+        $elapsed = [int]((Get-Date) - $startedAt).TotalMinutes
+        if ($code -eq '200') {
+            Write-Host ("  [{0:HH:mm:ss}] 运行中（已 {1} 分钟）" -f (Get-Date), $elapsed) -ForegroundColor DarkGray
+        }
+        else {
+            Write-Host ("  [{0:HH:mm:ss}] 服务无响应（HTTP {1}），尝试重新唤醒…" -f (Get-Date), $code) -ForegroundColor Yellow
+            Invoke-Wsl -Command "cd '$wslProject' && docker compose up -d" | Out-Null
+        }
+    }
+}
+finally {
+    Write-Host ""
+    Write-Host "  保活结束，服务将随 WSL 休眠。" -ForegroundColor DarkGray
+}
+

@@ -62,8 +62,10 @@ public class InternalPaymentController {
                               @RequestHeader(value = InternalHeaders.REQUEST_ID,
                                       required = false) String requestId) {
         String reason = command == null ? null : command.getReason();
-        log.info("Internal refund request: requestId={}, paymentNo={}", requestId, paymentNo);
-        return paymentService.refund(paymentNo, reason);
+        Long userId = command == null ? null : command.getUserId();
+        log.info("Internal refund request: requestId={}, paymentNo={}, userId={}",
+                requestId, paymentNo, userId);
+        return paymentService.refund(paymentNo, userId, reason);
     }
 
     @PostMapping("/{paymentNo}/close")
@@ -72,7 +74,9 @@ public class InternalPaymentController {
                              @RequestHeader(value = InternalHeaders.REQUEST_ID,
                                      required = false) String requestId) {
         String reason = command == null ? null : command.getReason();
-        log.info("Internal close request: requestId={}, paymentNo={}", requestId, paymentNo);
-        return paymentService.close(paymentNo, reason);
+        Long userId = command == null ? null : command.getUserId();
+        log.info("Internal close request: requestId={}, paymentNo={}, userId={}",
+                requestId, paymentNo, userId);
+        return paymentService.close(paymentNo, userId, reason);
     }
 }

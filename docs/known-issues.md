@@ -11,15 +11,15 @@
 | P0-1 | `FAILED` 的支付尝试复位时状态守卫误用 `STARTED_ONLY`，导致订单永久卡在待支付、库存不回补 | `OrderPaymentAttemptStore.resume()` 改为 `FAILED_ONLY` 守卫 | `OrderPaymentOrchestratorTest.failedAttemptIsRetriedByNextPayment` |
 | P0-2 | 内部鉴权按未解码的 `getRequestURI()` 前缀判断，`/%69nternal/...`、`//internal/...` 可无 token 访问支付接口 | `InternalTokenFilter` 改为拒绝优先，仅精确放行 `/actuator/health`、`/error` | `InternalAuthBypassTest`（真实 Tomcat，MockMvc 复现不了解码差异） |
 | KI-16 | `AGENTS.md` 的模块清单只写三个 Maven 模块，未预留 Python 服务的位置 | `AGENTS.md` 已补 `na-assistant-service`（非 Maven 模块）与 pytest/Docker 说明 | `na-assistant-service/tests/`、`AssistantContractTest` |
+| KI-03 | `refund`/`close` 不校验 `userId` 归属，任何持有内部 token 的调用方可退/关他人支付单 | `PaymentService.assertOwnership()`；`RefundCommand`/`ClosePaymentCommand` 补 `userId`；订单侧 `PaymentClient` 全链路透传；越权统一按 404 处理 | `PaymentServiceTest.ki03_refundByOtherUserIsNotFound`、`ki03_closeByOtherUserIsNotFound`、`ki03_refundWithoutUserIdIsRejected` |
+| KI-04 | 对账 `STATUS_SUCCEEDED` 分支不校验金额与用户，异常数据会被直接置为已支付 | `OrderPaymentReconciliationJob.paymentMismatch()`/`handleMismatch()`：与订单不一致时不入账，已扣款的自动退款，未扣款的标记失败 | `OrderPaymentReconciliationJobTest.ki04_succeededWithWrongAmountIsRefundedNotMarkedPaid`、`ki04_succeededWithWrongUserIsRefundedNotMarkedPaid`、`ki04_createdWithWrongAmountIsMarkedFailedNotRetried` |
 
 ## P1：正确性与安全，建议优先处理
 
 | ID | 问题 | 证据（代码位置） | 影响 | 建议 |
 |---|---|---|---|---|
 | KI-01 | 渠道调用无幂等键，且支付单无 `PROCESSING` 中间态 | `na-payment-service/.../channel/MockPaymentChannel.java:21`；`PaymentStatus` 只有 CREATED/SUCCEEDED/FAILED/REFUNDED | Mock 渠道看不到问题，接真实渠道后超时重试可能重复扣款、重复退款 | 渠道请求带 `paymentNo` 作幂等键；调渠道前先落 `PROCESSING`，结果回写 |
-| KI-02 | `refund`/`close` 先读状态 → 事务外调渠道 → 再条件更新，中间无 CAS 认领 | `PaymentService.java:87`、`:108` | 并发两次退款可同时通过前置状态检查，都可能打到渠道 | 先用条件 UPDATE 把状态认领为 `REFUNDING`/`CLOSING`，抢不到直接返回 |
-| KI-03 | `refund`/`close` 不校验 `userId` 归属 | `PaymentService.refund(String paymentNo, String reason)`、`close(...)` 签名不含 userId；`InternalPaymentController.java:59`、`:69` | 任何持有内部 token 的调用方可退/关他人支付单 | 命令对象补 `userId`，服务端比对支付单归属 |
-| KI-04 | 对账 `STATUS_SUCCEEDED` 分支不校验金额与用户 | `OrderPaymentReconciliationJob.java:106-115` 直接 `completePaid`；同类的 `retryPayment` 却校验金额 | 支付服务返回错金额/错用户的异常数据时，会被直接置为已支付 | 抽出统一的 `assertPaymentMatchesOrder`，编排器与对账共用 |
+| KI-02 | `refund`/`close` 先读状态 → 事务外调渠道 → 再条件更新，中间无 CAS 认领 | `PaymentService.refund`、`close` | 并发两次退款可同时通过前置状态检查，都可能打到渠道 | 先用条件 UPDATE 把状态认领为 `REFUNDING`/`CLOSING`，抢不到直接返回 |
 | KI-05 | `/api/**` 关闭了 CSRF，但认证依赖会话 Cookie | `config/SecurityConfig.java:65`（`.ignoringAntMatchers("/api/**")`） | 跨站页面可借用户会话代发下单/取消/支付请求 | 前端改带 CSRF token（或双提交 Cookie）；至少先显式设置 `SameSite` 并复核 |
 | KI-06 | `.env` 与 `backups/*.dump` 权限过宽（实测 0644） | 运行环境，`scripts/backup.sh` 生成备份后未收紧 | 同机其他用户可读到数据库口令与业务数据快照 | `umask 077`；备份落盘后 `chmod 600` |
 | KI-07 | `backup.sh` 的 `trap cleanup EXIT` 早于 postgres 预检 | `scripts/backup.sh:21`（trap）vs `:25`（预检） | postgres 没起时预检直接退出，cleanup 反而把两个应用容器拉起来 | trap 挪到预检之后，或 cleanup 里判断是否真的停过服务 |
@@ -49,7 +49,10 @@
 
 ## 建议的修复顺序
 
-1. **KI-03 + KI-04**：都是「少一个校验」，改动小、直接消除越权与错误入账，一天内可完成并补测试。
+1. ~~**KI-03 + KI-04**：越权与错误入账~~ ✅ 已于 2026-10-31 修复（见上表）。
 2. **KI-02 + KI-01**：退款/关闭的 CAS 认领与 `PROCESSING` 中间态一起做，接真实渠道前必须完成。
 3. **KI-05 + KI-06 + KI-07 + KI-08**：安全与运维卫生，可打包成一批。
 4. **KI-09 ~ KI-17**：工程化清理，随下次功能开发顺带处理。
+
+> 注：KI-06、KI-07 已在 DevOps 改造中一并处理（`scripts/backup.sh` 已改为 `umask 077` + `chmod 600`，
+> 备份移到 WSL 原生文件系统；trap 已挪到 postgres 预检之后）。

@@ -175,12 +175,12 @@ class PaymentServiceTest {
     void s7_refundIsIdempotent() {
         PaymentResult result = paymentService.pay(command("ORD-REFUND", 1L, "59.00"));
 
-        PaymentView refunded = paymentService.refund(result.getPayment().getPaymentNo(), "cancel");
+        PaymentView refunded = paymentService.refund(result.getPayment().getPaymentNo(), Long.valueOf(1L), "cancel");
         assertEquals("REFUNDED", refunded.getStatus());
         assertNotNull(refunded.getRefundedAt());
         assertEquals("cancel", refunded.getRefundReason());
 
-        PaymentView repeated = paymentService.refund(result.getPayment().getPaymentNo(), "cancel");
+        PaymentView repeated = paymentService.refund(result.getPayment().getPaymentNo(), Long.valueOf(1L), "cancel");
         assertEquals("REFUNDED", repeated.getStatus());
         assertEquals(1, paymentRepository.countByOrderNo("ORD-REFUND"));
     }
@@ -190,14 +190,14 @@ class PaymentServiceTest {
         Payment created = paymentRepository.saveAndFlush(new Payment(
                 "PAY-CREATED-CLOSE", "ORD-CLOSE", 1L, new BigDecimal("10.00"), "CNY", "MOCK"));
 
-        PaymentView closed = paymentService.close(created.getPaymentNo(), "cancel");
+        PaymentView closed = paymentService.close(created.getPaymentNo(), Long.valueOf(1L), "cancel");
         assertEquals("FAILED", closed.getStatus());
-        PaymentView repeated = paymentService.close(created.getPaymentNo(), "cancel");
+        PaymentView repeated = paymentService.close(created.getPaymentNo(), Long.valueOf(1L), "cancel");
         assertEquals("FAILED", repeated.getStatus());
 
         PaymentResult succeeded = paymentService.pay(command("ORD-CLOSE-SUCCEEDED", 1L, "20.00"));
         PaymentApiException exception = assertThrows(PaymentApiException.class,
-                () -> paymentService.close(succeeded.getPayment().getPaymentNo(), "cancel"));
+                () -> paymentService.close(succeeded.getPayment().getPaymentNo(), Long.valueOf(1L), "cancel"));
         assertEquals(HttpStatus.CONFLICT, exception.getStatus());
     }
 
@@ -207,8 +207,46 @@ class PaymentServiceTest {
                 "PAY-CREATED-REFUND", "ORD-REFUND-CREATED", 1L, new BigDecimal("10.00"), "CNY", "MOCK"));
 
         PaymentApiException exception = assertThrows(PaymentApiException.class,
-                () -> paymentService.refund(created.getPaymentNo(), "cancel"));
+                () -> paymentService.refund(created.getPaymentNo(), Long.valueOf(1L), "cancel"));
         assertEquals(HttpStatus.CONFLICT, exception.getStatus());
+    }
+
+    // ---------------------------------------------------------------- KI-03
+    // 退款/关闭必须校验支付单归属，避免持有内部 token 的调用方操作他人支付单。
+
+    @Test
+    void ki03_refundByOtherUserIsNotFound() {
+        PaymentResult result = paymentService.pay(command("ORD-KI03-REFUND", 1L, "59.00"));
+
+        PaymentApiException exception = assertThrows(PaymentApiException.class,
+                () -> paymentService.refund(result.getPayment().getPaymentNo(), Long.valueOf(99L), "越权退款"));
+
+        // 越权按「不存在」处理，避免探测他人支付单是否存在
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        assertEquals("SUCCEEDED",
+                paymentService.getPayment(1L, result.getPayment().getPaymentNo()).getStatus());
+    }
+
+    @Test
+    void ki03_closeByOtherUserIsNotFound() {
+        Payment created = paymentRepository.saveAndFlush(new Payment(
+                "PAY-KI03-CLOSE", "ORD-KI03-CLOSE", 1L, new BigDecimal("10.00"), "CNY", "MOCK"));
+
+        PaymentApiException exception = assertThrows(PaymentApiException.class,
+                () -> paymentService.close(created.getPaymentNo(), Long.valueOf(99L), "越权关闭"));
+
+        assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        assertEquals("CREATED", paymentService.getPayment(1L, created.getPaymentNo()).getStatus());
+    }
+
+    @Test
+    void ki03_refundWithoutUserIdIsRejected() {
+        PaymentResult result = paymentService.pay(command("ORD-KI03-NOUSER", 1L, "59.00"));
+
+        PaymentApiException exception = assertThrows(PaymentApiException.class,
+                () -> paymentService.refund(result.getPayment().getPaymentNo(), (Long) null, "缺少 userId"));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
     }
 
     private PaymentCommand command(String orderNo, Long userId, String amount) {
