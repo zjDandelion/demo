@@ -65,6 +65,13 @@ public class Payment {
     @Column(name = "refund_reason", length = 200)
     private String refundReason;
 
+    /**
+     * 渠道调用认领时间（KI-01/KI-02）。
+     * 认领中间态时写入，用于识别「认领后长时间未收敛」的僵死支付单。
+     */
+    @Column(name = "channel_attempt_at")
+    private LocalDateTime channelAttemptAt;
+
     public Payment(String paymentNo, String orderNo, Long userId, BigDecimal amount, String currency, String channel) {
         this.paymentNo = paymentNo;
         this.orderNo = orderNo;

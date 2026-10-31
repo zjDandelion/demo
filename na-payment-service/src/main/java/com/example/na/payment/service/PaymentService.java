@@ -1,6 +1,7 @@
 package com.example.na.payment.service;
 
 import com.example.na.payment.channel.PaymentChannel;
+import com.example.na.payment.channel.PaymentChannelException;
 import com.example.na.payment.contract.PaymentCommand;
 import com.example.na.payment.contract.PaymentStatusView;
 import com.example.na.payment.contract.PaymentView;
@@ -59,15 +60,27 @@ public class PaymentService {
             return new PaymentResult(toView(attempt.payment), attempt.created);
         }
 
+        // KI-01：认领 PROCESSING 之后再调渠道。
+        // 认领失败说明已有其他请求在处理，本次不重复扣款。
+        String paymentNo = attempt.payment.getPaymentNo();
+        Integer claimed = transactionTemplate.execute(status -> claimCharge(paymentNo));
+        if (claimed == null || claimed == 0) {
+            return resumeWithoutChannel(paymentNo, attempt.created);
+        }
+
         try {
-            paymentChannel.charge(attempt.payment);
+            paymentChannel.charge(attempt.payment, paymentNo);
         } catch (RuntimeException exception) {
             log.warn("Payment channel charge failed: paymentNo={}, orderNo={}",
-                    attempt.payment.getPaymentNo(), attempt.payment.getOrderNo(), exception);
+                    paymentNo, attempt.payment.getOrderNo(), exception);
+            // 渠道明确失败才回滚到 CREATED 以便重试；结果未知则保留 PROCESSING 等对账
+            if (exception instanceof PaymentChannelException) {
+                transactionTemplate.execute(status -> releaseCharge(paymentNo));
+            }
             throw PaymentApiException.inProgress("支付渠道调用失败，结果未知");
         }
 
-        return transactionTemplate.execute(status -> completePayment(attempt));
+        return transactionTemplate.execute(status -> completePayment(paymentNo, attempt.created));
     }
 
     @Transactional(readOnly = true)
@@ -90,15 +103,30 @@ public class PaymentService {
                 .orElseThrow(() -> PaymentApiException.notFound("支付单不存在"));
         // KI-03：校验归属，避免持有内部 token 的调用方退他人支付单
         assertOwnership(payment, userId, "退款");
+
+        // 幂等：已退款直接返回
         if (payment.getStatus() == PaymentStatus.REFUNDED) {
+            return toView(payment);
+        }
+        // 已认领但未完成：说明另一请求正在退款或结果未知，不能重复调渠道
+        if (payment.getStatus() == PaymentStatus.REFUNDING) {
+            log.info("Refund already claimed, skipping channel call: paymentNo={}", paymentNo);
             return toView(payment);
         }
         if (payment.getStatus() != PaymentStatus.SUCCEEDED) {
             throw PaymentApiException.refundNotAllowed("当前支付状态不可退款");
         }
 
+        // KI-02：CAS 认领 SUCCEEDED -> REFUNDING，抢不到说明并发请求已认领
+        Integer claimed = transactionTemplate.execute(status -> claimRefund(paymentNo));
+        if (claimed == null || claimed == 0) {
+            log.info("Refund claim lost to concurrent request: paymentNo={}", paymentNo);
+            return toView(paymentRepository.findByPaymentNo(paymentNo)
+                    .orElseThrow(() -> PaymentApiException.notFound("支付单不存在")));
+        }
+
         try {
-            paymentChannel.refund(payment, normalizedReason);
+            paymentChannel.refund(payment, normalizedReason, paymentNo);
         } catch (RuntimeException exception) {
             log.warn("Payment channel refund failed: paymentNo={}", paymentNo, exception);
             throw PaymentApiException.inProgress("退款渠道调用失败，结果未知");
@@ -112,15 +140,28 @@ public class PaymentService {
                 .orElseThrow(() -> PaymentApiException.notFound("支付单不存在"));
         // KI-03：校验归属，避免持有内部 token 的调用方关闭他人支付单
         assertOwnership(payment, userId, "关闭");
+
         if (payment.getStatus() == PaymentStatus.FAILED) {
+            return toView(payment);
+        }
+        if (payment.getStatus() == PaymentStatus.CLOSING) {
+            log.info("Close already claimed, skipping channel call: paymentNo={}", paymentNo);
             return toView(payment);
         }
         if (payment.getStatus() != PaymentStatus.CREATED) {
             throw PaymentApiException.conflict("当前支付状态不可关闭");
         }
 
+        // KI-02：CAS 认领 CREATED -> CLOSING
+        Integer claimed = transactionTemplate.execute(status -> claimClose(paymentNo));
+        if (claimed == null || claimed == 0) {
+            log.info("Close claim lost to concurrent request: paymentNo={}", paymentNo);
+            return toView(paymentRepository.findByPaymentNo(paymentNo)
+                    .orElseThrow(() -> PaymentApiException.notFound("支付单不存在")));
+        }
+
         try {
-            paymentChannel.close(payment, reason);
+            paymentChannel.close(payment, reason, paymentNo);
         } catch (RuntimeException exception) {
             log.warn("Payment channel close failed: paymentNo={}", paymentNo, exception);
             throw PaymentApiException.inProgress("关闭渠道调用失败，结果未知");
@@ -202,10 +243,19 @@ public class PaymentService {
                 log.info("Resuming created payment: paymentNo={}, orderNo={}",
                         existing.getPaymentNo(), existing.getOrderNo());
                 return new Prepared(existing, false, true);
-            case FAILED:
-                throw PaymentApiException.conflict("支付单已关闭");
+            case PROCESSING:
+                // 已认领但未完成：可能正在扣款，也可能上次结果未知
+                log.info("Payment already processing: paymentNo={}, orderNo={}",
+                        existing.getPaymentNo(), existing.getOrderNo());
+                return new Prepared(existing, false, false);
+            case REFUNDING:
+                throw PaymentApiException.conflict("支付单退款中");
             case REFUNDED:
                 throw PaymentApiException.conflict("支付单已退款");
+            case CLOSING:
+                throw PaymentApiException.conflict("支付单关闭中");
+            case FAILED:
+                throw PaymentApiException.conflict("支付单已关闭");
             default:
                 throw PaymentApiException.internal("未知支付状态");
         }
@@ -223,15 +273,57 @@ public class PaymentService {
         }
     }
 
-    private PaymentResult completePayment(Prepared prepared) {
-        String paymentNo = prepared.payment.getPaymentNo();
-        paymentRepository.markSucceeded(paymentNo, PaymentStatus.SUCCEEDED, PaymentStatus.CREATED,
+    // ---------------------------------------------------------------- CAS 认领
+
+    private int claimCharge(String paymentNo) {
+        return paymentRepository.claimForCharge(paymentNo, PaymentStatus.PROCESSING,
+                PaymentStatus.CREATED, LocalDateTime.now());
+    }
+
+    private int releaseCharge(String paymentNo) {
+        return paymentRepository.claimStatus(paymentNo, PaymentStatus.PROCESSING, PaymentStatus.CREATED);
+    }
+
+    private int claimRefund(String paymentNo) {
+        return paymentRepository.claimForRefund(paymentNo, PaymentStatus.REFUNDING,
+                PaymentStatus.SUCCEEDED, LocalDateTime.now());
+    }
+
+    private int claimClose(String paymentNo) {
+        return paymentRepository.claimForClose(paymentNo, PaymentStatus.CLOSING,
+                PaymentStatus.CREATED, LocalDateTime.now());
+    }
+
+    /**
+     * 认领失败时的处理：返回当前支付单状态，不调用渠道。
+     */
+    private PaymentResult resumeWithoutChannel(String paymentNo, boolean created) {
+        Payment current = paymentRepository.findByPaymentNo(paymentNo)
+                .orElseThrow(() -> PaymentApiException.internal("支付单不存在"));
+        if (current.getStatus() == PaymentStatus.SUCCEEDED) {
+            return new PaymentResult(toView(current), false);
+        }
+        if (current.getStatus() == PaymentStatus.PROCESSING) {
+            log.info("Payment charge claimed by another request: paymentNo={}", paymentNo);
+            throw PaymentApiException.inProgress("支付处理中，请稍后重试");
+        }
+        if (current.getStatus() == PaymentStatus.FAILED) {
+            throw PaymentApiException.conflict("支付单已关闭");
+        }
+        if (current.getStatus() == PaymentStatus.REFUNDED) {
+            throw PaymentApiException.conflict("支付单已退款");
+        }
+        throw PaymentApiException.inProgress("支付单状态处理中，请稍后重试");
+    }
+
+    private PaymentResult completePayment(String paymentNo, boolean created) {
+        paymentRepository.markSucceeded(paymentNo, PaymentStatus.SUCCEEDED, PaymentStatus.PROCESSING,
                 LocalDateTime.now());
         Payment current = paymentRepository.findByPaymentNo(paymentNo)
                 .orElseThrow(() -> PaymentApiException.internal("支付单不存在"));
         if (current.getStatus() == PaymentStatus.SUCCEEDED) {
             log.info("Payment succeeded: paymentNo={}, orderNo={}", paymentNo, current.getOrderNo());
-            return new PaymentResult(toView(current), prepared.created);
+            return new PaymentResult(toView(current), created);
         }
         if (current.getStatus() == PaymentStatus.FAILED) {
             throw PaymentApiException.conflict("支付单已关闭");
@@ -243,7 +335,7 @@ public class PaymentService {
     }
 
     private PaymentView completeRefund(String paymentNo, String reason) {
-        paymentRepository.markRefunded(paymentNo, PaymentStatus.REFUNDED, PaymentStatus.SUCCEEDED,
+        paymentRepository.markRefunded(paymentNo, PaymentStatus.REFUNDED, PaymentStatus.REFUNDING,
                 LocalDateTime.now(), reason);
         Payment current = paymentRepository.findByPaymentNo(paymentNo)
                 .orElseThrow(() -> PaymentApiException.internal("支付单不存在"));
@@ -251,21 +343,22 @@ public class PaymentService {
             log.info("Payment refunded: paymentNo={}", paymentNo);
             return toView(current);
         }
-        if (current.getStatus() == PaymentStatus.SUCCEEDED) {
+        if (current.getStatus() == PaymentStatus.REFUNDING) {
             throw PaymentApiException.inProgress("退款状态未确认，请稍后重试");
         }
         throw PaymentApiException.conflict("当前支付状态不可退款");
     }
 
     private PaymentView completeClose(String paymentNo) {
-        paymentRepository.markFailed(paymentNo, PaymentStatus.FAILED, PaymentStatus.CREATED);
+        paymentRepository.markFailed(paymentNo, PaymentStatus.FAILED,
+                java.util.Arrays.asList(PaymentStatus.CLOSING, PaymentStatus.PROCESSING));
         Payment current = paymentRepository.findByPaymentNo(paymentNo)
                 .orElseThrow(() -> PaymentApiException.internal("支付单不存在"));
         if (current.getStatus() == PaymentStatus.FAILED) {
             log.info("Payment closed: paymentNo={}", paymentNo);
             return toView(current);
         }
-        if (current.getStatus() == PaymentStatus.CREATED) {
+        if (current.getStatus() == PaymentStatus.CLOSING) {
             throw PaymentApiException.inProgress("关闭状态未确认，请稍后重试");
         }
         throw PaymentApiException.conflict("当前支付状态不可关闭");

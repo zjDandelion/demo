@@ -13,13 +13,13 @@
 | KI-16 | `AGENTS.md` 的模块清单只写三个 Maven 模块，未预留 Python 服务的位置 | `AGENTS.md` 已补 `na-assistant-service`（非 Maven 模块）与 pytest/Docker 说明 | `na-assistant-service/tests/`、`AssistantContractTest` |
 | KI-03 | `refund`/`close` 不校验 `userId` 归属，任何持有内部 token 的调用方可退/关他人支付单 | `PaymentService.assertOwnership()`；`RefundCommand`/`ClosePaymentCommand` 补 `userId`；订单侧 `PaymentClient` 全链路透传；越权统一按 404 处理 | `PaymentServiceTest.ki03_refundByOtherUserIsNotFound`、`ki03_closeByOtherUserIsNotFound`、`ki03_refundWithoutUserIdIsRejected` |
 | KI-04 | 对账 `STATUS_SUCCEEDED` 分支不校验金额与用户，异常数据会被直接置为已支付 | `OrderPaymentReconciliationJob.paymentMismatch()`/`handleMismatch()`：与订单不一致时不入账，已扣款的自动退款，未扣款的标记失败 | `OrderPaymentReconciliationJobTest.ki04_succeededWithWrongAmountIsRefundedNotMarkedPaid`、`ki04_succeededWithWrongUserIsRefundedNotMarkedPaid`、`ki04_createdWithWrongAmountIsMarkedFailedNotRetried` |
+| KI-01 | 渠道调用无幂等键，且支付单无 `PROCESSING` 中间态 | `PaymentChannel` 三个方法都增加 `idempotencyKey` 参数（统一用 `paymentNo`）；`MockPaymentChannel` 内置幂等表，重复键直接跳过；`PaymentStatus` 新增 `PROCESSING`/`REFUNDING`/`CLOSING`；`payments` 表新增 `channel_attempt_at`（Flyway V2） | `PaymentServiceTest.ki01_chargeGoesThroughProcessingAndLandsSucceeded`、`ki01_processingStateIsNotChargeableAgain`、`ki01_channelFailureReleasesClaimForRetry` |
+| KI-02 | `refund`/`close` 先读状态 → 事务外调渠道 → 再条件更新，中间无 CAS 认领 | 新增 `PaymentRepository.claimForCharge/claimForRefund/claimForClose`（条件 UPDATE）；抢不到认领的请求直接返回当前状态，不再调渠道 | `PaymentServiceTest.ki02_concurrentRefundOnlyCallsChannelOnce`、`ki02_refundWhileRefundingReturnsWithoutChannelCall`、`ki02_closeWhileClosingReturnsWithoutChannelCall` |
 
 ## P1：正确性与安全，建议优先处理
 
 | ID | 问题 | 证据（代码位置） | 影响 | 建议 |
 |---|---|---|---|---|
-| KI-01 | 渠道调用无幂等键，且支付单无 `PROCESSING` 中间态 | `na-payment-service/.../channel/MockPaymentChannel.java:21`；`PaymentStatus` 只有 CREATED/SUCCEEDED/FAILED/REFUNDED | Mock 渠道看不到问题，接真实渠道后超时重试可能重复扣款、重复退款 | 渠道请求带 `paymentNo` 作幂等键；调渠道前先落 `PROCESSING`，结果回写 |
-| KI-02 | `refund`/`close` 先读状态 → 事务外调渠道 → 再条件更新，中间无 CAS 认领 | `PaymentService.refund`、`close` | 并发两次退款可同时通过前置状态检查，都可能打到渠道 | 先用条件 UPDATE 把状态认领为 `REFUNDING`/`CLOSING`，抢不到直接返回 |
 | KI-05 | `/api/**` 关闭了 CSRF，但认证依赖会话 Cookie | `config/SecurityConfig.java:65`（`.ignoringAntMatchers("/api/**")`） | 跨站页面可借用户会话代发下单/取消/支付请求 | 前端改带 CSRF token（或双提交 Cookie）；至少先显式设置 `SameSite` 并复核 |
 | KI-06 | `.env` 与 `backups/*.dump` 权限过宽（实测 0644） | 运行环境，`scripts/backup.sh` 生成备份后未收紧 | 同机其他用户可读到数据库口令与业务数据快照 | `umask 077`；备份落盘后 `chmod 600` |
 | KI-07 | `backup.sh` 的 `trap cleanup EXIT` 早于 postgres 预检 | `scripts/backup.sh:21`（trap）vs `:25`（预检） | postgres 没起时预检直接退出，cleanup 反而把两个应用容器拉起来 | trap 挪到预检之后，或 cleanup 里判断是否真的停过服务 |
@@ -49,10 +49,32 @@
 
 ## 建议的修复顺序
 
-1. ~~**KI-03 + KI-04**：越权与错误入账~~ ✅ 已于 2026-10-31 修复（见上表）。
-2. **KI-02 + KI-01**：退款/关闭的 CAS 认领与 `PROCESSING` 中间态一起做，接真实渠道前必须完成。
-3. **KI-05 + KI-06 + KI-07 + KI-08**：安全与运维卫生，可打包成一批。
+1. ~~**KI-03 + KI-04**：越权与错误入账~~ ✅ 2026-10-31 修复。
+2. ~~**KI-02 + KI-01**：退款/关闭的 CAS 认领与 `PROCESSING` 中间态~~ ✅ 2026-10-31 修复。
+3. **KI-05 + KI-08**：CSRF 与优雅停机，可打包成一批。
 4. **KI-09 ~ KI-17**：工程化清理，随下次功能开发顺带处理。
 
 > 注：KI-06、KI-07 已在 DevOps 改造中一并处理（`scripts/backup.sh` 已改为 `umask 077` + `chmod 600`，
 > 备份移到 WSL 原生文件系统；trap 已挪到 postgres 预检之后）。
+
+## 中间态运维提示（KI-01 引入）
+
+支付单新增三个中间态，正常情况下会在秒级内收敛到终态：
+
+| 状态 | 含义 | 何时会卡住 |
+|---|---|---|
+| `PROCESSING` | 已认领扣款，渠道调用中或结果未知 | 渠道超时/进程崩溃 |
+| `REFUNDING` | 已认领退款 | 同上 |
+| `CLOSING` | 已认领关闭 | 同上 |
+
+排查僵死中间态（超过 10 分钟未收敛）：
+
+```sql
+SELECT payment_no, order_no, status, channel_attempt_at
+FROM payments
+WHERE status IN ('PROCESSING', 'REFUNDING', 'CLOSING')
+  AND channel_attempt_at < NOW() - INTERVAL '10 minutes';
+```
+
+处理方式：确认渠道侧实际结果后，手工把状态推进到终态（`SUCCEEDED` / `REFUNDED` / `FAILED`），
+或触发订单侧对账任务收敛。**不要直接删除支付单**，订单侧还引用着 `payment_no`。

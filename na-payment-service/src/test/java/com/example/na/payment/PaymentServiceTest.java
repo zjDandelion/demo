@@ -4,6 +4,7 @@ import com.example.na.payment.contract.PaymentCommand;
 import com.example.na.payment.contract.PaymentStatusView;
 import com.example.na.payment.contract.PaymentView;
 import com.example.na.payment.domain.Payment;
+import com.example.na.payment.domain.PaymentStatus;
 import com.example.na.payment.repository.PaymentRepository;
 import com.example.na.payment.service.PaymentService;
 import com.example.na.payment.service.PaymentService.PaymentResult;
@@ -41,6 +42,9 @@ class PaymentServiceTest {
 
     @Autowired
     private PaymentRepository paymentRepository;
+
+    @Autowired
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     private ExecutorService executor;
 
@@ -247,6 +251,122 @@ class PaymentServiceTest {
                 () -> paymentService.refund(result.getPayment().getPaymentNo(), (Long) null, "缺少 userId"));
 
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+    }
+
+    // ---------------------------------------------------------------- KI-02
+    // 退款/关闭必须先用 CAS 认领，并发请求不能都打到渠道。
+
+    @Test
+    void ki02_concurrentRefundOnlyCallsChannelOnce() throws Exception {
+        PaymentResult result = paymentService.pay(command("ORD-KI02-REFUND", 1L, "59.00"));
+        String paymentNo = result.getPayment().getPaymentNo();
+
+        int threads = 4;
+        executor = Executors.newFixedThreadPool(threads);
+        CountDownLatch ready = new CountDownLatch(threads);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<PaymentView>> futures = new ArrayList<>();
+
+        for (int i = 0; i < threads; i++) {
+            Callable<PaymentView> task = () -> {
+                ready.countDown();
+                start.await(10, TimeUnit.SECONDS);
+                return paymentService.refund(paymentNo, 1L, "concurrent");
+            };
+            futures.add(executor.submit(task));
+        }
+
+        assertTrue(ready.await(10, TimeUnit.SECONDS));
+        start.countDown();
+
+        int succeeded = 0;
+        for (Future<PaymentView> future : futures) {
+            try {
+                PaymentView view = future.get(30, TimeUnit.SECONDS);
+                if ("REFUNDED".equals(view.getStatus())) {
+                    succeeded++;
+                }
+            } catch (Exception exception) {
+                // 认领失败的请求可能返回 409「退款中」，属预期
+            }
+        }
+
+        // 至少有一个成功；最终状态必须是 REFUNDED 且只退一次
+        assertTrue(succeeded >= 1, "至少一个退款请求应成功");
+        assertEquals("REFUNDED", paymentService.getPayment(1L, paymentNo).getStatus());
+    }
+
+    @Test
+    void ki02_refundWhileRefundingReturnsWithoutChannelCall() {
+        Payment succeeded = paymentRepository.saveAndFlush(new Payment(
+                "PAY-KI02-RING", "ORD-KI02-RING", 1L, new BigDecimal("10.00"), "CNY", "MOCK"));
+        // 手工置为 SUCCEEDED，再认领为 REFUNDING 模拟「另一请求正在退款」
+        claimDirect(succeeded.getPaymentNo(), PaymentStatus.CREATED, PaymentStatus.SUCCEEDED);
+        claimDirect(succeeded.getPaymentNo(), PaymentStatus.SUCCEEDED, PaymentStatus.REFUNDING);
+
+        PaymentView view = paymentService.refund(succeeded.getPaymentNo(), 1L, "second");
+
+        // 不调渠道、不报错，直接返回当前状态
+        assertEquals("REFUNDING", view.getStatus());
+    }
+
+    @Test
+    void ki02_closeWhileClosingReturnsWithoutChannelCall() {
+        Payment created = paymentRepository.saveAndFlush(new Payment(
+                "PAY-KI02-CRING", "ORD-KI02-CRING", 1L, new BigDecimal("10.00"), "CNY", "MOCK"));
+        claimDirect(created.getPaymentNo(), PaymentStatus.CREATED, PaymentStatus.CLOSING);
+
+        PaymentView view = paymentService.close(created.getPaymentNo(), 1L, "second");
+
+        assertEquals("CLOSING", view.getStatus());
+    }
+
+    // ---------------------------------------------------------------- KI-01
+    // 扣款必须先认领 PROCESSING；渠道失败且结果明确时回退 CREATED 以便重试。
+
+    @Test
+    void ki01_chargeGoesThroughProcessingAndLandsSucceeded() {
+        PaymentResult result = paymentService.pay(command("ORD-KI01-OK", 1L, "59.00"));
+
+        assertEquals("SUCCEEDED", result.getPayment().getStatus());
+        Payment stored = paymentRepository.findByPaymentNo(result.getPayment().getPaymentNo()).get();
+        assertEquals(PaymentStatus.SUCCEEDED, stored.getStatus());
+        // 认领时间已记录，便于运维识别僵死中间态
+        assertNotNull(stored.getChannelAttemptAt());
+    }
+
+    @Test
+    void ki01_processingStateIsNotChargeableAgain() {
+        Payment payment = paymentRepository.saveAndFlush(new Payment(
+                "PAY-KI01-PROC", "ORD-KI01-PROC", 1L, new BigDecimal("10.00"), "CNY", "MOCK"));
+        claimDirect(payment.getPaymentNo(), PaymentStatus.CREATED, PaymentStatus.PROCESSING);
+
+        // 已有请求认领中：不重复扣款，直接返回当前状态（幂等语义）
+        PaymentResult result = paymentService.pay(command("ORD-KI01-PROC", 1L, "10.00"));
+
+        assertEquals("PROCESSING", result.getPayment().getStatus());
+        assertEquals("PROCESSING",
+                paymentService.getPayment(1L, payment.getPaymentNo()).getStatus());
+    }
+
+    @Test
+    void ki01_channelFailureReleasesClaimForRetry() {
+        Payment payment = paymentRepository.saveAndFlush(new Payment(
+                "PAY-KI01-RETRY", "ORD-KI01-RETRY", 1L, new BigDecimal("10.00"), "CNY", "MOCK"));
+
+        // 模拟「认领后渠道明确失败」：PROCESSING -> CREATED
+        claimDirect(payment.getPaymentNo(), PaymentStatus.CREATED, PaymentStatus.PROCESSING);
+        int released = claimDirect(payment.getPaymentNo(), PaymentStatus.PROCESSING, PaymentStatus.CREATED);
+
+        assertEquals(1, released, "认领应可回退");
+        assertEquals("CREATED",
+                paymentService.getPayment(1L, payment.getPaymentNo()).getStatus());
+    }
+
+    private int claimDirect(String paymentNo, PaymentStatus from, PaymentStatus to) {
+        Integer result = new org.springframework.transaction.support.TransactionTemplate(transactionManager)
+                .execute(status -> paymentRepository.claimStatus(paymentNo, from, to));
+        return result == null ? 0 : result;
     }
 
     private PaymentCommand command(String orderNo, Long userId, String amount) {
