@@ -53,10 +53,9 @@ fi
 log "回滚 $CURRENT -> $TARGET"
 
 for svc in $SERVICES; do
-    if ! docker image inspect "$REGISTRY/$OWNER/$svc:$TARGET" >/dev/null 2>&1; then
-        docker pull "$REGISTRY/$OWNER/$svc:$TARGET" \
-            || die "镜像 $svc:$TARGET 不存在且拉取失败"
-    fi
+    # 回滚同样要拉取，避免本地残留的旧镜像让回滚指向错误内容
+    docker pull "$REGISTRY/$OWNER/$svc:$TARGET" \
+        || die "镜像 $svc:$TARGET 拉取失败（如需离线回滚请先手动 docker pull）"
 done
 
 # 用临时文件 + mv 整体替换 .env。

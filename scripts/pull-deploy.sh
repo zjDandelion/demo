@@ -50,11 +50,13 @@ fi
 log "目标版本 $TARGET_TAG（当前 ${PREVIOUS_TAG:-无记录}）"
 
 # 1. 先拉镜像，拉不到就不动线上容器。
-#    本地已有同名镜像时跳过拉取（支持离线/内网场景）。
+#    默认总是拉取，保证拿到仓库里的最新 digest；
+#    确实需要离线部署时传 OFFLINE=1 才跳过。
 log "拉取镜像"
 for svc in $SERVICES; do
-    if docker image inspect "$REGISTRY/$OWNER/$svc:$TARGET_TAG" >/dev/null 2>&1; then
-        ok "$svc（本地已存在）"
+    if [ "${OFFLINE:-0}" = "1" ] \
+        && docker image inspect "$REGISTRY/$OWNER/$svc:$TARGET_TAG" >/dev/null 2>&1; then
+        ok "$svc（离线模式，使用本地镜像）"
         continue
     fi
     docker pull "$REGISTRY/$OWNER/$svc:$TARGET_TAG" \
