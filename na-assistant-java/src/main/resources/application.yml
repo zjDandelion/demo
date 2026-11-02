@@ -1,0 +1,41 @@
+server:
+  port: 8093
+  tomcat:
+    max-swallow-size: -1
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+
+spring:
+  application:
+    name: na-assistant-java
+  jackson:
+    # 与 Python 的 Decimal 对齐：浮点一律用 BigDecimal 解析
+    deserialization:
+      use-big-decimal-for-floats: true
+      fail-on-unknown-properties: true
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: non_null
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+app:
+  assistant:
+    # 内部鉴权 token（与 Python 的 ASSISTANT_INTERNAL_TOKEN 同名）
+    internal-token: ${ASSISTANT_INTERNAL_TOKEN:}
+    # OpenAI 兼容端点，三项都配置才会调用模型，否则返回 DISABLED
+    base-url: ${ASSISTANT_BASE_URL:}
+    model: ${ASSISTANT_MODEL:}
+    api-key: ${ASSISTANT_API_KEY:}
+    timeout-ms: ${ASSISTANT_TIMEOUT_MS:4000}
+    max-body-bytes: ${ASSISTANT_MAX_BODY_BYTES:262144}
+    max-catalog: ${ASSISTANT_MAX_CATALOG:100}
+    max-exclude: ${ASSISTANT_MAX_EXCLUDE:100}
+    max-text-length: ${ASSISTANT_MAX_TEXT_LENGTH:2000}
+    debug: ${ASSISTANT_DEBUG:0}

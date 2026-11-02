@@ -82,6 +82,41 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # Java 版助手服务。与上面的 Python 版并存，默认不启动。
+  # 启动：docker compose --profile java-assistant up -d na-assistant-java
+  # 切换：把订单服务的 APP_ASSISTANT_URL 指向 http://na-assistant-java:8093
+  na-assistant-java:
+    profiles: ["java-assistant"]
+    build:
+      context: .
+      dockerfile: na-assistant-java/Dockerfile
+    image: ${NA_ASSISTANT_JAVA_IMAGE:-na-assistant-java:local}
+    environment:
+      ASSISTANT_INTERNAL_TOKEN: ${ASSISTANT_SERVICE_TOKEN:-}
+      ASSISTANT_BASE_URL: ${ASSISTANT_BASE_URL:-}
+      ASSISTANT_MODEL: ${ASSISTANT_MODEL:-}
+      ASSISTANT_API_KEY: ${ASSISTANT_API_KEY:-}
+      ASSISTANT_DEBUG: "0"
+      ASSISTANT_TIMEOUT_MS: "4000"
+      TZ: Asia/Shanghai
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx256m -Duser.timezone=Asia/Shanghai"
+    expose:
+      - "8093"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8093/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    mem_limit: 384m
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   na-order-service:
     build:
       context: .
@@ -97,8 +132,9 @@ services:
       APP_PAYMENT_CONNECT_TIMEOUT_MS: "2000"
       APP_PAYMENT_READ_TIMEOUT_MS: "5000"
       APP_RECONCILIATION_ENABLED: "true"
-      APP_ASSISTANT_ENABLED: "false"
-      APP_ASSISTANT_URL: http://na-assistant-service:8092
+      APP_ASSISTANT_ENABLED: ${APP_ASSISTANT_ENABLED:-false}
+      # 默认指向 Python 版；切换 Java 版时设为 http://na-assistant-java:8093
+      APP_ASSISTANT_URL: ${APP_ASSISTANT_URL:-http://na-assistant-service:8092}
       APP_ASSISTANT_TOKEN: ${ASSISTANT_SERVICE_TOKEN:-}
       TZ: Asia/Shanghai
       JAVA_TOOL_OPTIONS: "-Xms256m -Xmx512m -Duser.timezone=Asia/Shanghai"

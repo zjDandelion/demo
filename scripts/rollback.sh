@@ -84,6 +84,11 @@ for svc in $SERVICES; do
 done
 update_env_file "${ENV_PAIRS[@]}"
 
+# 关键：脚本开头 set -a 时已把旧值导出到 shell 环境，
+# 而 compose 的优先级是「shell 环境 > .env 文件」，
+# 不重新加载就会用旧镜像重建。这里把文件重新导入 shell，保证两者一致。
+set -a; . ./.env; set +a
+
 # /mnt/e 是 9p 挂载，compose 可能读到旧缓存。
 # 显式传 --env-file，并等待文件内容真的可见后再重建。
 sync
@@ -92,29 +97,41 @@ for _ in $(seq 1 10); do
     sleep 0.5
 done
 
+EXPECTED="$REGISTRY/$OWNER/na-order-service:$TARGET"
+
+current_image() {
+    local cid
+    cid="$(docker ps -q --filter "name=${COMPOSE_PROJECT:-demo}-na-order-service" 2>/dev/null | head -n1 || true)"
+    [ -n "$cid" ] && docker inspect "$cid" --format '{{.Config.Image}}' 2>/dev/null || true
+}
+
 log "重建容器"
 docker compose --env-file .env up -d --remove-orphans --force-recreate
 
 deadline=$(( $(date +%s) + 180 ))
+retried=0
 while [ "$(date +%s)" -lt "$deadline" ]; do
     if curl -fsS -m 5 http://localhost:8081/actuator/health 2>/dev/null | grep -q '"status":"UP"'; then
-        # 健康检查通过后再确认容器真的换了镜像。
-        # 注意：set -euo pipefail 下，命令替换里的非零退出码会中断脚本，
-        # 这里显式兜底，避免把“容器刚启动还没就绪”误判为失败。
-        # 按容器名查找，避免 compose ps 在 9p 挂载下返回旧 ID
-        CID="$(docker ps -q --filter "name=${COMPOSE_PROJECT:-demo}-na-order-service" 2>/dev/null | head -n1 || true)"
-        RUNNING=""
-        if [ -n "$CID" ]; then
-            RUNNING="$(docker inspect "$CID" --format '{{.Config.Image}}' 2>/dev/null || true)"
-        fi
-        if [ "$RUNNING" = "$REGISTRY/$OWNER/na-order-service:$TARGET" ]; then
+        # set -euo pipefail 下命令替换的非零退出码会中断脚本，这里显式兜底
+        RUNNING="$(current_image)"
+        if [ "$RUNNING" = "$EXPECTED" ]; then
             ok "已回滚到 $TARGET 并通过健康检查"
             printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$TARGET" >> "$HISTORY_FILE"
             exit 0
+        fi
+
+        # 健康但镜像没换：9p 缓存导致 compose 跳过了重建，强制重试一次
+        if [ "$retried" -eq 0 ]; then
+            retried=1
+            printf '\033[33m    镜像未切换（%s），强制重建重试…\033[0m\n' "${RUNNING:-unknown}"
+            docker compose --env-file .env up -d --remove-orphans --force-recreate \
+                >/dev/null 2>&1 || true
+            sleep 3
+            continue
         fi
         printf '\033[33m    健康但镜像未切换（%s），继续等待…\033[0m\n' "${RUNNING:-unknown}"
     fi
     sleep 2
 done
 
-die "回滚后健康检查超时，请检查 docker compose logs"
+die "回滚后健康检查超时或镜像未切换（期望 $EXPECTED）"

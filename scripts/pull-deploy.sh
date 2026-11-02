@@ -89,29 +89,38 @@ done
 update_env_file "${ENV_PAIRS[@]}"
 ok ".env 已更新"
 
-# 3. 重建（--force-recreate 确保镜像变更一定生效）
-# /mnt/e 是 9p 挂载，compose 可能读到旧缓存；显式传 --env-file 并等文件可见。
+# 关键：脚本开头 set -a 时已把旧值导出到 shell 环境，
+# 而 compose 的优先级是「shell 环境 > .env 文件」，
+# 不重新加载就会用旧镜像重建。这里把文件重新导入 shell，保证两者一致。
+set -a; . ./.env; set +a
+
+# 3. 重建
+# /mnt/e 是 9p 挂载，compose 可能读到旧的 config-hash 而跳过重建，
+# 所以这里带 --force-recreate，并在镜像未切换时再强制重试一次。
 sync
 for _ in $(seq 1 10); do
     grep -q "^NA_ORDER_IMAGE=.*:$TARGET_TAG$" .env && break
     sleep 0.5
 done
+
+EXPECTED="$REGISTRY/$OWNER/na-order-service:$TARGET_TAG"
+
+current_image() {
+    local cid
+    cid="$(docker ps -q --filter "name=${COMPOSE_PROJECT:-demo}-na-order-service" 2>/dev/null | head -n1 || true)"
+    [ -n "$cid" ] && docker inspect "$cid" --format '{{.Config.Image}}' 2>/dev/null || true
+}
+
 log "重建容器"
 docker compose --env-file .env up -d --remove-orphans --force-recreate
 
 # 4. 等健康，并确认容器真的换成了目标镜像
 log "等待健康检查（最多 ${HEALTH_TIMEOUT}s）"
-EXPECTED="$REGISTRY/$OWNER/na-order-service:$TARGET_TAG"
 deadline=$(( $(date +%s) + HEALTH_TIMEOUT ))
+retried=0
 while [ "$(date +%s)" -lt "$deadline" ]; do
     if curl -fsS -m 5 http://localhost:8081/actuator/health 2>/dev/null | grep -q '"status":"UP"'; then
-        # set -euo pipefail 下命令替换的非零退出码会中断脚本，这里显式兜底
-        # 按容器名查找，避免 compose ps 在 9p 挂载下返回旧 ID
-        CID="$(docker ps -q --filter "name=${COMPOSE_PROJECT:-demo}-na-order-service" 2>/dev/null | head -n1 || true)"
-        RUNNING=""
-        if [ -n "$CID" ]; then
-            RUNNING="$(docker inspect "$CID" --format '{{.Config.Image}}' 2>/dev/null || true)"
-        fi
+        RUNNING="$(current_image)"
         if [ "$RUNNING" = "$EXPECTED" ]; then
             ok "健康检查通过，镜像已切换"
             printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$TARGET_TAG" >> "$HISTORY_FILE"
@@ -119,11 +128,23 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
             log "部署完成：$TARGET_TAG"
             exit 0
         fi
+
+        # 健康但镜像没换：9p 缓存导致 compose 跳过了重建，强制重试一次
+        if [ "$retried" -eq 0 ]; then
+            retried=1
+            printf '\033[33m    镜像未切换（%s），强制重建重试…\033[0m\n' "${RUNNING:-unknown}"
+            docker compose --env-file .env up -d --remove-orphans --force-recreate --renew-anon-volumes \
+                >/dev/null 2>&1 || true
+            sleep 3
+            continue
+        fi
         printf '\033[33m    健康但镜像未切换（%s），继续等待…\033[0m\n' "${RUNNING:-unknown}"
     fi
     sleep 2
 done
 
-printf '\033[31m!! 健康检查超时或镜像未切换\033[0m\n' >&2
+printf '\033[31m!! 健康检查超时或镜像未切换（期望 %s）\033[0m\n' "$EXPECTED" >&2
+printf '排查：docker compose ps；docker inspect %s-na-order-service-1 --format "{{.Config.Image}}"\n' \
+    "${COMPOSE_PROJECT:-demo}" >&2
 [ -n "$PREVIOUS_TAG" ] && printf '回滚：bash scripts/rollback.sh\n' >&2
 exit 1

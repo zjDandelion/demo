@@ -69,7 +69,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: 推送 assistant 服务
+      - name: 推送 assistant 服务（Python）
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -79,6 +79,19 @@ jobs:
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/na-assistant-service:${{ steps.meta.outputs.version }}
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/na-assistant-service:sha-${{ steps.meta.outputs.sha }}
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/na-assistant-service:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 推送 assistant 服务（Java）
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: na-assistant-java/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/na-assistant-java:${{ steps.meta.outputs.version }}
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/na-assistant-java:sha-${{ steps.meta.outputs.sha }}
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/na-assistant-java:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -94,6 +107,7 @@ jobs:
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/na-order-service:${{ steps.meta.outputs.version }}
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/na-payment-service:${{ steps.meta.outputs.version }}
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/na-assistant-service:${{ steps.meta.outputs.version }}
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/na-assistant-java:${{ steps.meta.outputs.version }}
             ```
 
             ## 部署
@@ -106,4 +120,11 @@ jobs:
 
             ```bash
             bash scripts/rollback.sh
+            ```
+
+            ## 助手服务切换
+
+            ```bash
+            bash scripts/switch-assistant.sh java     # 切到 Java 版
+            bash scripts/switch-assistant.sh python   # 切回 Python 版
             ```

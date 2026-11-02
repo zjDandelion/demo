@@ -91,7 +91,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: 构建 assistant 镜像
+      - name: 构建 assistant 镜像（Python）
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -99,6 +99,17 @@ jobs:
           push: false
           load: true
           tags: na-assistant-service:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 构建 assistant 镜像（Java）
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: na-assistant-java/Dockerfile
+          push: false
+          load: true
+          tags: na-assistant-java:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

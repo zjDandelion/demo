@@ -2,12 +2,15 @@
 
 ## Project Structure & Module Organization
 
-This is a Java 8 / Spring Boot 2.7.18 microservices platform with three Maven modules plus one Python service:
+This is a Java 8 / Spring Boot 2.7.18 microservices platform with four Maven modules plus one Python service:
 
 - `na-payment-contract/` — shared DTOs and interface contracts consumed by both services (e.g. `PaymentView`, `PaymentStatusView`). Declared in the root `dependencyManagement` so versions stay in sync.
 - `na-order-service/` — order lifecycle, catalog, security, and the payment-orchestration integration layer. Packaged as `na-order-service.jar`.
 - `na-payment-service/` — independent payment processing with a mock channel. Packaged as `na-payment-service.jar`.
-- `na-assistant-service/` — Python 3.11 / FastAPI service that turns natural language into a cart draft via an OpenAI-compatible model. **Not a Maven module** and not built by `mvnw`; it is only built by Docker Compose (`na-assistant-service/Dockerfile`) and tested with pytest.
+- `na-assistant-java/` — Java rewrite of the assistant service. Same internal contract (`POST /internal/v1/assistant/parse`) as the Python service; listens on `8093`. Packaged as `na-assistant-java.jar`.
+- `na-assistant-service/` — Python 3.11 / FastAPI service that turns natural language into a cart draft via an OpenAI-compatible model. **Not a Maven module** and not built by `mvnw`; it is only built by Docker Compose (`na-assistant-service/Dockerfile`) and tested with pytest. Kept as a fallback: switch between the two with `scripts/switch-assistant.sh`.
+
+The two assistant services are functionally equivalent and share the same contract fixtures. Only one is used at a time, selected by the order service's `APP_ASSISTANT_URL`.
 
 Standard Spring Boot layout applies inside each module: `src/main/java`, `src/main/resources`, `src/test/java`, `src/test/resources`. Generated build artifacts live in `target/` and are gitignored.
 
@@ -72,9 +75,11 @@ Pull requests should:
 
 ## Docker & Deployment Notes
 
-Deployment is orchestrated with `docker-compose.yml` (services: `na-postgres`, `na-payment-service`, `na-order-service`, `na-assistant-service`). Database passwords, the internal service token, and the optional AI settings are loaded from `.env`. A Postgres init script in `scripts/postgres/init-databases.sh` creates the two databases on first boot.
+Deployment is orchestrated with `docker-compose.yml` (services: `na-postgres`, `na-payment-service`, `na-order-service`, `na-assistant-service`, and the opt-in `na-assistant-java` behind the `java-assistant` profile). Database passwords, the internal service token, and the optional AI settings are loaded from `.env`. A Postgres init script in `scripts/postgres/init-databases.sh` creates the two databases on first boot.
 
-`na-assistant-service` is internal-only (`expose: 8092`, no host port) and uses its own `ASSISTANT_SERVICE_TOKEN`, never the payment `INTERNAL_SERVICE_TOKEN`. The order service does not depend on it: when the container is down or misconfigured, `POST /api/assistant/drafts` still returns 200 with `degraded=true` and a `degradedReason`.
+`na-assistant-service` is internal-only (`expose: 8092`, no host port) and uses its own `ASSISTANT_SERVICE_TOKEN`, never the payment `INTERNAL_SERVICE_TOKEN`. `na-assistant-java` mirrors this on `expose: 8093` and is **not started by default** — enable it with `docker compose --profile java-assistant up -d na-assistant-java`. The order service does not depend on either: when the container is down or misconfigured, `POST /api/assistant/drafts` still returns 200 with `degraded=true` and a `degradedReason`.
+
+Switching between the two assistant implementations is a single env change (`APP_ASSISTANT_URL` → `http://na-assistant-service:8092` or `http://na-assistant-java:8093`), automated by `scripts/switch-assistant.sh [java|python|status]`. Use `scripts/compare-assistant.sh "<text>"` to diff both implementations against the same input while they run side by side.
 
 The build stage runs all tests inside the container; a test failure prevents image replacement, protecting a running deployment.
 

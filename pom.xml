@@ -22,6 +22,7 @@
         <module>na-payment-contract</module>
         <module>na-order-service</module>
         <module>na-payment-service</module>
+        <module>na-assistant-java</module>
     </modules>
 
     <properties>
